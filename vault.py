@@ -674,10 +674,26 @@ class VaultManager:
             col_group = get_column_letter(headers.index("Group") + 1)
             ws_groups = wb.create_sheet("Groups")
             ws_groups["A1"] = "Group Name"
-            ws_groups["A1"].font = Font(bold=True)
-            for i, g in enumerate(self.get_all_groups(), start=2):
+            existing_groups = self.get_all_groups()
+            for i, g in enumerate(existing_groups, start=2):
                 ws_groups.cell(row=i, column=1, value=g)
             ws_groups.column_dimensions["A"].width = 30
+
+            # Same real-Excel-Table treatment as the Clients sheet (banded
+            # rows, filter arrow, frozen header) — confirmed live, plain
+            # unstyled cells here read as inconsistent with Clients.
+            MIN_GROUPS_ROWS = 20
+            groups_last_row = max(len(existing_groups), MIN_GROUPS_ROWS) + 1
+            tab_groups = Table(displayName="Groups", ref=f"A1:A{groups_last_row}")
+            tab_groups.tableStyleInfo = TableStyleInfo(
+                name="TableStyleMedium2", showFirstColumn=False, showLastColumn=False,
+                showRowStripes=True, showColumnStripes=False,
+            )
+            ws_groups.add_table(tab_groups)
+            ws_groups.freeze_panes = "A2"
+            for row_cells in ws_groups.iter_rows(min_row=2, max_row=max(groups_last_row, 2), max_col=1):
+                for cell in row_cells:
+                    cell.alignment = Alignment(vertical="center")
 
             GROUPS_MAX_ROWS = 200  # headroom for groups added directly on this sheet
             dv_group = DataValidation(
