@@ -4007,7 +4007,7 @@ if __name__ == "__main__":
         # startup actually was. Uses a processEvents() pump rather than
         # time.sleep() so the fade-in/glow/dot animations keep rendering
         # during the wait instead of freezing mid-motion.
-        _MIN_SPLASH_SECONDS = 1.3
+        _MIN_SPLASH_SECONDS = 3.0
         if splash is not None and _splash_shown_at is not None:
             _deadline = _splash_shown_at + _MIN_SPLASH_SECONDS
             while time.monotonic() < _deadline:
