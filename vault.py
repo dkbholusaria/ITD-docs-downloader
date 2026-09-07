@@ -503,6 +503,7 @@ class VaultManager:
                 password = _cell('password')
                 email = _cell('email') if 'email' in col else ""
                 cc = _cell('cc') if 'cc' in col else ""
+                group = _cell('group') if 'group' in col else ""
 
                 if not name or not pan or not dob or not password:
                     errors.append(f"Row {row_num}: Missing values in Name, PAN, DOB, or Password.")
@@ -513,7 +514,7 @@ class VaultManager:
                     continue
 
                 is_existing = pan in existing_pans
-                self.add_update_assessee(name, pan, dob, password, email=email, cc=cc)
+                self.add_update_assessee(name, pan, dob, password, email=email, cc=cc, group=group)
                 if is_existing:
                     updated_count += 1
                 else:
@@ -526,8 +527,8 @@ class VaultManager:
 
     def generate_template(self, file_path: str):
         """Generates an Excel import template with sample columns."""
-        headers = ["Name", "PAN", "DOB", "Password", "Email", "CC"]
-        sample = ["John Doe", "AAAPT0001A", "01-01-1980", "YourPortalPassword",
+        headers = ["Name", "Group", "PAN", "DOB", "Password", "Email", "CC"]
+        sample = ["John Doe", "", "AAAPT0001A", "01-01-1980", "YourPortalPassword",
                   "client@example.com", "spouse@example.com;accountant@firm.com"]
         target = file_path if (file_path.endswith('.csv') or file_path.endswith('.xlsx')) else file_path + ".xlsx"
         self._write_client_table_file(target, headers, [sample])
@@ -535,9 +536,9 @@ class VaultManager:
     def export_data(self, file_path: str):
         """Exports all saved assessees (with decrypted passwords) to Excel or CSV."""
         assessees = self.get_all_assessees()
-        headers = ["Name", "PAN", "DOB", "Password", "Email", "CC"]
-        rows = [[a.get("name", ""), a.get("pan", ""), a.get("dob", ""), a.get("password", ""),
-                 a.get("email", ""), a.get("cc", "")]
+        headers = ["Name", "Group", "PAN", "DOB", "Password", "Email", "CC"]
+        rows = [[a.get("name", ""), a.get("group", ""), a.get("pan", ""), a.get("dob", ""),
+                 a.get("password", ""), a.get("email", ""), a.get("cc", "")]
                 for a in assessees]
         self._write_client_table_file(file_path, headers, rows)
 
@@ -557,6 +558,11 @@ class VaultManager:
             "",
             "Name",
             "  The client's name, just for you to recognise them by.",
+            "",
+            "Group",
+            "  Optional — e.g. a family or firm name (\"Bholusaria Family\"). Leave "
+            "blank if this client isn't part of a group. Importing the same group "
+            "name for several clients groups them together in the app.",
             "",
             "PAN",
             "  The client's 10-character PAN, e.g. AAAPT0001A. If a PAN already "
@@ -620,7 +626,7 @@ class VaultManager:
         )
         ws.add_table(tab)
         ws.freeze_panes = "A2"
-        col_widths = {"Name": 22, "PAN": 14, "DOB": 12, "Password": 20, "Email": 26, "CC": 30}
+        col_widths = {"Name": 22, "Group": 20, "PAN": 14, "DOB": 12, "Password": 20, "Email": 26, "CC": 30}
         for i, label in enumerate(headers, start=1):
             ws.column_dimensions[get_column_letter(i)].width = col_widths.get(label, 16)
         for row_cells in ws.iter_rows(min_row=2, max_row=max(table_last_row, 2), max_col=len(headers)):
@@ -689,6 +695,10 @@ class VaultManager:
 
         sections = [
             ("Name", "The client's name, just for you to recognise them by."),
+            ("Group",
+             'Optional — e.g. a family or firm name ("Bholusaria Family"). Leave '
+             "blank if this client isn't part of a group. Importing the same group "
+             "name for several clients groups them together in the app."),
             ("PAN",
              "The client's 10-character PAN, e.g. AAAPT0001A. If a PAN already exists "
              "in AayDocCapio, importing it again updates that client instead of adding "

@@ -1926,6 +1926,40 @@ class AayDocCapioApp(QMainWindow):
 
     # ── Form Operations ───────────────────────────────────────────────────────
 
+    _ADD_NEW_GROUP = "➕ Add New Group…"
+
+    def _make_group_combo(self, current: str = ""):
+        """F-11 group picker, shared by the Add/Edit Client dialog and
+        "Assign to Group…" — an editable combo (typing a new name directly
+        still works) PLUS an explicit "Add New Group…" item, since simply
+        typing into an editable combo turned out not to be discoverable at
+        all (confirmed live: the user asked "how will I create group" with
+        an empty Group field in front of them)."""
+        combo = StyledComboBox()
+        combo.setEditable(True)
+        combo.setFixedHeight(34)
+        combo.addItem("")  # blank = ungrouped, always selectable
+        combo.addItems(self.vault.get_all_groups())
+        combo.addItem(self._ADD_NEW_GROUP)
+        if current:
+            combo.setCurrentText(current)
+
+        def _on_index_changed(idx):
+            if combo.itemText(idx) != self._ADD_NEW_GROUP:
+                return
+            from PyQt6.QtWidgets import QInputDialog
+            name, ok = QInputDialog.getText(self, "Add New Group", "Group name:")
+            name = name.strip() if ok else ""
+            if name:
+                if combo.findText(name) < 0:
+                    combo.insertItem(combo.count() - 1, name)  # before the sentinel
+                combo.setCurrentText(name)
+            else:
+                combo.setCurrentIndex(0)  # back to blank/ungrouped, not stuck on the sentinel
+
+        combo.currentIndexChanged.connect(_on_index_changed)
+        return combo
+
     # ── Client Dialog (Add / Edit popup) ─────────────────────────────────────
 
     def _open_add_client(self):
@@ -2020,11 +2054,7 @@ class AayDocCapioApp(QMainWindow):
 
         # ── Group (F-11, optional) ───────────────────────────────────────────
         vl.addWidget(_field_label("Group (optional — e.g. a family or firm name)"))
-        fields["group"] = StyledComboBox()
-        fields["group"].setEditable(True)
-        fields["group"].setFixedHeight(34)
-        fields["group"].addItem("")  # blank = ungrouped, always selectable
-        fields["group"].addItems(self.vault.get_all_groups())
+        fields["group"] = self._make_group_combo(a.get("group", "") if editing else "")
         vl.addWidget(fields["group"])
         vl.addSpacing(10)
 
@@ -2274,7 +2304,6 @@ class AayDocCapioApp(QMainWindow):
             fields["pwd"].setText(a.get("password", ""))
             fields["email"].setText(a.get("email", ""))
             fields["cc"].setText(a.get("cc", ""))
-            fields["group"].setCurrentText(a.get("group", ""))
 
         # Buttons
         btn_row = QHBoxLayout()
@@ -2333,11 +2362,7 @@ class AayDocCapioApp(QMainWindow):
         vl.setSpacing(8)
 
         vl.addWidget(QLabel(f"Set the Group for {len(self.selected_ids)} selected client(s):"))
-        combo = StyledComboBox()
-        combo.setEditable(True)
-        combo.setFixedHeight(34)
-        combo.addItem("")  # blank = ungroup the selected clients
-        combo.addItems(self.vault.get_all_groups())
+        combo = self._make_group_combo()
         vl.addWidget(combo)
         vl.addSpacing(12)
 
