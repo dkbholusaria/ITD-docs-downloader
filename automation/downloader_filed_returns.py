@@ -146,7 +146,7 @@ async def _is_return_verified(card, step) -> "bool | None":
     return None
 
 
-async def _apply_ay_filter(filed_returns_page: Page, assessment_year: str, step,
+async def apply_ay_filter(filed_returns_page: Page, assessment_year: str, step,
                             previous_year: str | None = None) -> bool:
     """Opens the Filter popup and selects assessment_year in the 'Assessment
     Year' multi-select, then applies it — so the list renders only matching
@@ -495,7 +495,7 @@ async def _process_card(card, filing_type: str, filing_date_ddmmyyyy: str, ack_n
     return saved, warns
 
 
-async def _navigate_to_view_filed_returns(page: Page, log_callback) -> Page:
+async def navigate_to_view_filed_returns(page: Page, log_callback) -> Page:
     """One-time navigation: e-File > Income Tax Returns > View Filed Returns,
     landing on the rendered filings list. F-14 (multi-year): this is the
     expensive/fragile part (the same e-File hover navigation stabilized
@@ -554,9 +554,9 @@ async def _download_filed_returns_for_year(
     previous_year: str | None = None,
 ) -> tuple[bool, str, list[dict]]:
     """Downloads Filed Returns/Intimation Orders for ONE Assessment Year,
-    assuming `_navigate_to_view_filed_returns()` has already landed on the
+    assuming `navigate_to_view_filed_returns()` has already landed on the
     rendered filings list. `previous_year`, if given, is the last AY this
-    same page was filtered to (used to uncheck it — see `_apply_ay_filter`'s
+    same page was filtered to (used to uncheck it — see `apply_ay_filter`'s
     docstring)."""
     step = make_step_logger(log_callback, "FILEDRET")
     try:
@@ -571,9 +571,9 @@ async def _download_filed_returns_for_year(
         # confirmed mat-select[formcontrolname='ay'] control — far cheaper
         # than scanning every page. Falls back to the "View More" + page-walk
         # approach if the filter interaction doesn't work as expected (e.g.
-        # the apply-button guess inside _apply_ay_filter turns out wrong).
+        # the apply-button guess inside apply_ay_filter turns out wrong).
         step("Attempting Assessment Year filter (preferred path)")
-        filtered = await _apply_ay_filter(filed_returns_page, assessment_year, step, previous_year=previous_year)
+        filtered = await apply_ay_filter(filed_returns_page, assessment_year, step, previous_year=previous_year)
         step(f"AY filter {'applied' if filtered else 'NOT applied — using fallback scan'}")
 
         if not filtered:
@@ -808,7 +808,7 @@ async def download_filed_returns(
     step = make_step_logger(log_callback, "FILEDRET")
     results: dict[str, tuple[bool, str, list[dict]]] = {}
     try:
-        filed_returns_page = await _navigate_to_view_filed_returns(page, log_callback)
+        filed_returns_page = await navigate_to_view_filed_returns(page, log_callback)
     except Exception as e:
         step(f"[Error] Could not reach View Filed Returns: {e}")
         for ay in assessment_years:

@@ -34,6 +34,7 @@ from ui.widgets import StyledComboBox, CheckableComboBox
 from ui.dialogs import (
     ManageYearsDialog, BatchProgressDialog, DownloadPickerDialog,
     GenerateChallansDialog, ChallanGenerationProgressDialog,
+    ReturnStatusDialog, ReturnStatusProgressDialog,
 )
 from ui.log_history import LogHistoryDialog, LogStore
 from automation.errors import _friendly_error
@@ -243,6 +244,8 @@ class AayDocCapioApp(QMainWindow):
     _show_progress_signal = pyqtSignal(list, object, list, str, str)   # (targets, selected_docs: set, year_specs, output_dir, year_tag)
     _challan_done_signal = pyqtSignal()
     _show_challan_progress_signal = pyqtSignal(list, str, str, str)   # (targets, fy_value, type_label, output_dir)
+    _return_status_done_signal = pyqtSignal()
+    _show_return_status_progress_signal = pyqtSignal(list, str)   # (targets, ay_value)
 
     def __init__(self):
         super().__init__()
@@ -298,6 +301,15 @@ class AayDocCapioApp(QMainWindow):
         self._challan_progress_dialog = None
         self._challan_done_signal.connect(self._on_challan_batch_done)
         self._show_challan_progress_signal.connect(self._show_challan_progress_dialog)
+
+        self._retstatus_running = False
+        self._retstatus_loop = None
+        self._retstatus_task = None
+        self._retstatus_aborted = False
+        self._retstatus_progress_dialog = None
+        self._retstatus_on_done = None
+        self._return_status_done_signal.connect(self._on_return_status_batch_done)
+        self._show_return_status_progress_signal.connect(self._show_return_status_progress_dialog)
 
         try:
             log_path = os.path.join(_app_dir(), "app.log")
@@ -526,6 +538,15 @@ class AayDocCapioApp(QMainWindow):
         act_challan_template.triggered.connect(self._download_challan_template)
         epay_menu.addAction(act_challan_template)
         self._epay_menu = epay_menu
+
+        # Return Status menu (F-67) — a review/tracking screen opened
+        # occasionally, not a per-run action like Downloads/E-Pay Tax, so it
+        # only gets a menu entry, no toolbar button.
+        return_status_menu = menubar.addMenu("Return Status")
+        act_return_status = QAction("Check Processing Status…", self)
+        act_return_status.triggered.connect(self._open_return_status_dialog)
+        return_status_menu.addAction(act_return_status)
+        self._return_status_menu = return_status_menu
 
         # Help menu
         help_menu = menubar.addMenu("Help")
@@ -2929,6 +2950,140 @@ class AayDocCapioApp(QMainWindow):
         if hasattr(self, "_tray_send_act") and not self.is_running:
             self._tray_send_act.setVisible(False)
         self.refresh_grid()
+
+    # ── F-67: ITR Processing Status ──────────────────────────────────────────
+
+    def _open_return_status_dialog(self):
+        """Menu entry point — opens the browse/filter/select window. The
+        dialog itself calls back into start_return_status_check() below
+        when the user actually wants to re-check something; it never runs
+        Playwright itself."""
+        ReturnStatusDialog(self, self.vault, self._ay_entries).exec()
+
+    def start_return_status_check(self, ay_value: str, targets: list, on_done=None):
+        """Called by ReturnStatusDialog with the clients/AY the user picked
+        and checked. `on_done` is a plain callback (not a Qt signal) —
+        _on_return_status_batch_done invokes it once the batch actually
+        finishes, safely on the main thread, since that method is itself
+        only ever reached via _return_status_done_signal."""
+        if not targets:
+            return
+        if self._retstatus_running:
+            QMessageBox.information(self, "Already Running",
+                                     "A status check is already in progress.")
+            return
+        self._retstatus_running = True
+        self._retstatus_aborted = False
+        self._retstatus_on_done = on_done
+        self.log(f"[System] Starting ITR Processing Status check — {len(targets)} client(s) | AY {ay_value}")
+        self._show_return_status_progress_signal.emit(targets, ay_value)
+        threading.Thread(
+            target=self._run_return_status_wrapper,
+            args=(targets, ay_value), daemon=True).start()
+
+    def _show_return_status_progress_dialog(self, targets: list, ay_value: str):
+        self._retstatus_progress_dialog = ReturnStatusProgressDialog(
+            targets, ay_value, stop_callback=self.stop_return_status_check, parent=self)
+        self._retstatus_progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        self._retstatus_progress_dialog.show()
+        self._retstatus_progress_dialog.raise_()
+        self._retstatus_progress_dialog.activateWindow()
+
+    def stop_return_status_check(self):
+        if not self._retstatus_running:
+            return
+        self.log("[System] Abort requested (ITR Processing Status check)...")
+        self._retstatus_running = False
+        self._retstatus_aborted = True
+        if self._retstatus_task and self._retstatus_loop:
+            self._retstatus_loop.call_soon_threadsafe(self._retstatus_task.cancel)
+
+    def _run_return_status_wrapper(self, targets, ay_value):
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        self._retstatus_loop = loop
+        try:
+            self._retstatus_task = loop.create_task(
+                self._execute_return_status_check(targets, ay_value))
+            loop.run_until_complete(self._retstatus_task)
+        except asyncio.CancelledError:
+            self.log("[System] ITR Processing Status check cancelled.")
+        except Exception as e:
+            self.log(f"[System Error] ITR Processing Status check crashed: {e}")
+        finally:
+            self._retstatus_task = None
+            self._retstatus_loop = None
+            loop.close()
+            self._retstatus_running = False
+            if self._retstatus_progress_dialog:
+                self._retstatus_progress_dialog.batch_finished()
+            self._return_status_done_signal.emit()
+
+    async def _execute_return_status_check(self, targets, ay_value):
+        from automation.return_status import check_return_status
+
+        def set_status(row_index, text):
+            if self._retstatus_progress_dialog:
+                self._retstatus_progress_dialog.set_status(row_index, text)
+
+        try:
+            interactive = not self.chk_headless.isChecked()
+            context = await browser_manager.get_context(log_callback=self.log, interactive=interactive)
+        except Exception as e:
+            self.log(f"[System Error] Browser init failed: {e}"); return
+
+        processed_indices = set()
+        try:
+            for i, target in enumerate(targets):
+                if not self._retstatus_running:
+                    self.log("[System] Aborted."); break
+
+                pan = target.get("pan", "")
+                name = target.get("name", "")
+                dob = target.get("dob", "")
+                self.log("──────────────────────────────────────────────────")
+                self.log(f"[{i+1}/{len(targets)}] {name}")
+                set_status(i, "⏳ Logging in to ITD...")
+
+                page = None
+                try:
+                    page = await login_itd(pan, target.get("password"), self.log, context,
+                                            is_running=lambda: self._retstatus_running)
+                    set_status(i, "⏳ Checking status...")
+                    result = await check_return_status(page, ay_value, self.log, pan=pan, dob=dob)
+                    processed_indices.add(i)
+
+                    if result["ok"]:
+                        self.vault.record_return_status(
+                            pan, ay_value, result["status"],
+                            filing_date=result.get("filing_date", ""),
+                            ack_no=result.get("ack_no", ""))
+                        set_status(i, f"✅ {result['status']}")
+                    else:
+                        set_status(i, f"❌ {result['reason']}")
+                except Exception as e:
+                    self.log(f"[Error] {name}: {e}")
+                    set_status(i, f"❌ Failed — {e}")
+                    processed_indices.add(i)
+                finally:
+                    if page:
+                        try:
+                            await logout_itd(page, self.log)
+                        except Exception:
+                            pass
+        except asyncio.CancelledError:
+            self.log("[System] ITR Processing Status check stopped by user.")
+        finally:
+            for idx in range(len(targets)):
+                if idx not in processed_indices:
+                    set_status(idx, "⏹ Stopped")
+
+    def _on_return_status_batch_done(self):
+        self.log("[System] ITR Processing Status check idle.")
+        cb = self._retstatus_on_done
+        self._retstatus_on_done = None
+        if cb:
+            cb()
 
     def skip_client(self):
         """Signal the batch runner to skip the currently-downloading client."""

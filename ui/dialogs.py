@@ -4786,3 +4786,372 @@ class MailDocsDialog(QDialog):
             item.setForeground(QColor(t.text_muted))
         item.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
         self._table.setItem(row, self._COL_FILES, item)
+
+
+# ── Return Status Dialog (F-67) ────────────────────────────────────────────
+
+class ReturnStatusProgressDialog(QDialog):
+    """
+    Live progress popup for an ITR Processing Status check run (F-67).
+    Deliberately a lighter sibling of ChallanGenerationProgressDialog — no
+    artifact/report/output-dir/tray plumbing, since this flow never produces
+    a file, just an updated status stored in the vault. Rows are keyed by
+    position in `targets`, same reasoning as the challan dialog: simpler to
+    reason about than re-deriving a row from PAN, and a PAN could in theory
+    appear twice if the same client got queued from two different views.
+    """
+    _update_signal = pyqtSignal(int, str)   # row_index, status
+
+    _COL_NAME = 0
+    _COL_PAN = 1
+    _COL_STATUS = 2
+
+    def __init__(self, targets: list, ay_value: str, stop_callback=None, parent=None):
+        super().__init__(parent)
+        self._stop_callback = stop_callback
+        self._targets = targets
+
+        self.setWindowTitle(f"Checking ITR Processing Status — AY {ay_value} — Batch Progress")
+        self.setMinimumSize(680, 380)
+        self.resize(760, min(160 + len(targets) * 42, 640))
+        self.setSizeGripEnabled(True)
+        _bt = _t()
+        self.setStyleSheet(f"QDialog{{background:{_bt.bg_window};}}")
+
+        self._counted_rows = set()
+        self._done_count = 0
+        self._total = len(targets)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 14, 16, 12)
+        layout.setSpacing(8)
+
+        title = QLabel(f"<b>Checking ITR Processing Status</b> — {len(targets)} client(s) "
+                        f"&nbsp;·&nbsp; <span style='color:{_bt.accent}'>AY {ay_value}</span>")
+        title.setStyleSheet(f"font-size:14px; color:{_bt.text_primary}; background:transparent;")
+        layout.addWidget(title)
+
+        self._table = QTableWidget(len(targets), 3)
+        self._table.setHorizontalHeaderLabels(["Name", "PAN", "Status"])
+        hdr = self._table.horizontalHeader()
+        hdr.setSectionResizeMode(self._COL_NAME, QHeaderView.ResizeMode.Interactive)
+        hdr.setSectionResizeMode(self._COL_PAN, QHeaderView.ResizeMode.Interactive)
+        hdr.setSectionResizeMode(self._COL_STATUS, QHeaderView.ResizeMode.Stretch)
+        self._table.setColumnWidth(self._COL_NAME, 200)
+        self._table.setColumnWidth(self._COL_PAN, 130)
+        self._table.verticalHeader().setVisible(False)
+        self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self._table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self._table.setStyleSheet(
+            f"QTableWidget{{border:1.5px solid {_bt.border};border-radius:8px;"
+            f"background:{_bt.bg_table};outline:0;gridline-color:{_bt.grid};}}"
+            f"QTableWidget::item{{border-bottom:1px solid {_bt.grid};padding:0 8px;}}")
+        hdr.setStyleSheet(
+            f"QHeaderView::section{{"
+            f"background-color:{_bt.bg_header};"
+            f"border:none;"
+            f"border-right:1px solid {_bt.border};"
+            f"border-bottom:1px solid {_bt.border};"
+            f"font-weight:bold;color:{_bt.text_muted};"
+            f"font-size:11px;height:34px;"
+            f"padding:0 8px;}}")
+
+        for row, tgt in enumerate(targets):
+            self._table.setRowHeight(row, 36)
+            name_item = QTableWidgetItem(tgt.get("name", "—"))
+            name_item.setForeground(QColor(_bt.text_primary))
+            self._table.setItem(row, self._COL_NAME, name_item)
+            pan_item = QTableWidgetItem(tgt.get("pan", ""))
+            pan_item.setFont(QFont(_MONO_FONT, 10))
+            pan_item.setForeground(QColor(_bt.text_muted))
+            self._table.setItem(row, self._COL_PAN, pan_item)
+            status_item = QTableWidgetItem("⬜ Waiting")
+            status_item.setForeground(QColor(_bt.text_primary))
+            self._table.setItem(row, self._COL_STATUS, status_item)
+
+        layout.addWidget(self._table, stretch=1)
+
+        self._progress_bar = QProgressBar()
+        self._progress_bar.setRange(0, self._total)
+        self._progress_bar.setFixedHeight(18)
+        self._progress_bar.setTextVisible(True)
+        self._progress_bar.setFormat(f"0 / {self._total} done")
+        self._progress_bar.setStyleSheet(
+            f"QProgressBar{{border:1px solid {_bt.border};border-radius:9px;"
+            f"background:{_bt.scrollbar_handle};text-align:center;font-size:11px;"
+            f"font-weight:600;color:{_bt.accent_text};}}"
+            f"QProgressBar::chunk{{background:#16A34A;border-radius:9px;}}")
+        layout.addWidget(self._progress_bar)
+
+        footer = QHBoxLayout()
+        footer.addStretch(1)
+        self._stop_btn = _btn("⏹  Stop", "danger")
+        self._stop_btn.clicked.connect(self._on_stop_clicked)
+        footer.addWidget(self._stop_btn)
+        layout.addLayout(footer)
+
+        self._update_signal.connect(self._on_update)
+
+    def set_status(self, row_index, text):
+        self._update_signal.emit(row_index, text)
+
+    def _on_update(self, row_index, text):
+        if not (0 <= row_index < self._total):
+            return
+        self._table.item(row_index, self._COL_STATUS).setText(text)
+        terminal = ("✅", "❌", "🕐", "⏹", "⬜", "⚠")
+        if row_index not in self._counted_rows and any(text.startswith(p) for p in terminal) and text != "⬜ Waiting":
+            self._counted_rows.add(row_index)
+            self._done_count += 1
+            self._progress_bar.setValue(self._done_count)
+            self._progress_bar.setFormat(f"{self._done_count} / {self._total} done")
+
+    def batch_finished(self):
+        _bt = _t()
+        self._stop_btn.setText("Close")
+        self._stop_btn.setStyleSheet(
+            f"QPushButton{{background:{_bt.bg_table_alt};color:{_bt.text_primary};"
+            f"border:1px solid {_bt.border};border-radius:6px;padding:6px 14px;"
+            f"font-weight:bold;font-size:12px;}}"
+            f"QPushButton:hover{{background:{_bt.bg_input};}}")
+        self._stop_btn.clicked.disconnect()
+        self._stop_btn.clicked.connect(self.accept)
+        self._stop_btn.setEnabled(True)
+
+    def _on_stop_clicked(self):
+        if self._stop_callback:
+            self._stop_callback()
+        self._stop_btn.setEnabled(False)
+
+
+class ReturnStatusDialog(QDialog):
+    """
+    Menu entry point: "Return Status > Check Processing Status...". Browse,
+    filter, and select clients/AY, then hand off to the parent window's
+    start_return_status_check() to actually run the live portal check (same
+    QThread + fresh-asyncio-loop worker pattern every other automation flow
+    in this app already uses) — this dialog itself never touches Playwright.
+
+    Persisted status (vault.get_return_status/_all) is what's shown; "Update
+    Selected" is the only thing that ever changes it, per the user's own
+    answer that this is a portal re-check, not a manual status edit.
+    """
+    _COL_CHECK = 0
+    _COL_PAN = 1
+    _COL_NAME = 2
+    _COL_AY = 3
+    _COL_STATUS = 4
+    _COL_LAST_CHECKED = 5
+
+    def __init__(self, parent, vault, ay_entries):
+        super().__init__(parent)
+        self._vault = vault
+        # Only AY-bearing entries make sense here — the "View Filed Returns"
+        # AY filter (and so the whole check_return_status() flow) works off
+        # the real AY string, not a not-yet-open TY-only current year.
+        self._ay_entries = [e for e in ay_entries if e.get("year", {}).get("AY")]
+        self._row_data: list = []
+        # (pan, ay) pairs the user has checked — kept across _refresh_table()
+        # rebuilds (search text changing, AY switching back and forth) so
+        # ticking a few rows then narrowing the search further doesn't
+        # silently lose the earlier selections.
+        self._checked_keys: set = set()
+
+        self.setWindowTitle("ITR Processing Status")
+        self.setMinimumSize(860, 520)
+        self.resize(940, 580)
+        self.setSizeGripEnabled(True)
+        _bt = _t()
+        self.setStyleSheet(f"QDialog{{background:{_bt.bg_window};}}")
+
+        self._build_ui()
+        self._refresh_table()
+
+    def _build_ui(self):
+        _bt = _t()
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 14, 16, 12)
+        layout.setSpacing(8)
+
+        filter_row = QHBoxLayout()
+        filter_row.setSpacing(10)
+        self._search = QLineEdit()
+        self._search.setPlaceholderText("🔍  Search by name or PAN...")
+        self._search.setClearButtonEnabled(True)
+        self._search.textChanged.connect(self._refresh_table)
+        filter_row.addWidget(self._search, 1)
+
+        filter_row.addWidget(_lbl("Year:"))
+        self._ay_combo = QComboBox()
+        self._ay_combo.addItem("All Years", "")
+        for e in self._ay_entries:
+            y = e.get("year", {})
+            self._ay_combo.addItem(e.get("label", y.get("AY", "")), y.get("AY", ""))
+        self._ay_combo.currentIndexChanged.connect(self._refresh_table)
+        filter_row.addWidget(self._ay_combo)
+
+        self._btn_update = _btn("🔄  Update Selected", "primary")
+        self._btn_update.clicked.connect(self._on_update_clicked)
+        filter_row.addWidget(self._btn_update)
+        layout.addLayout(filter_row)
+
+        self._table = QTableWidget(0, 6)
+        self._table.setHorizontalHeaderLabels(
+            ["", "PAN", "Name", "AY", "Status", "Last Checked"])
+        hdr = self._table.horizontalHeader()
+        hdr.setSectionResizeMode(self._COL_CHECK, QHeaderView.ResizeMode.Fixed)
+        hdr.setSectionResizeMode(self._COL_PAN, QHeaderView.ResizeMode.Interactive)
+        hdr.setSectionResizeMode(self._COL_NAME, QHeaderView.ResizeMode.Stretch)
+        hdr.setSectionResizeMode(self._COL_AY, QHeaderView.ResizeMode.Interactive)
+        hdr.setSectionResizeMode(self._COL_STATUS, QHeaderView.ResizeMode.Interactive)
+        hdr.setSectionResizeMode(self._COL_LAST_CHECKED, QHeaderView.ResizeMode.Interactive)
+        self._table.setColumnWidth(self._COL_CHECK, 32)
+        self._table.setColumnWidth(self._COL_PAN, 110)
+        self._table.setColumnWidth(self._COL_AY, 80)
+        self._table.setColumnWidth(self._COL_STATUS, 260)
+        self._table.setColumnWidth(self._COL_LAST_CHECKED, 140)
+        self._table.verticalHeader().setVisible(False)
+        self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self._table.setStyleSheet(
+            f"QTableWidget{{border:1.5px solid {_bt.border};border-radius:8px;"
+            f"background:{_bt.bg_table};outline:0;gridline-color:{_bt.grid};}}"
+            f"QTableWidget::item{{border-bottom:1px solid {_bt.grid};padding:0 8px;}}")
+        hdr.setStyleSheet(
+            f"QHeaderView::section{{"
+            f"background-color:{_bt.bg_header};"
+            f"border:none;"
+            f"border-right:1px solid {_bt.border};"
+            f"border-bottom:1px solid {_bt.border};"
+            f"font-weight:bold;color:{_bt.text_muted};"
+            f"font-size:11px;height:34px;"
+            f"padding:0 8px;}}")
+        layout.addWidget(self._table, stretch=1)
+
+        hint = QLabel(
+            "Pick a specific Year to select clients and check their current status "
+            "live from the portal. \"All Years\" is browse-only.")
+        hint.setStyleSheet(f"color:{_bt.text_muted};font-size:11px;background:transparent;")
+        layout.addWidget(hint)
+
+        footer = QHBoxLayout()
+        self._counts_label = QLabel("")
+        self._counts_label.setStyleSheet(f"color:{_bt.text_muted};font-size:12px;background:transparent;")
+        footer.addWidget(self._counts_label, 1)
+        btn_close = _btn("Close", "outline")
+        btn_close.clicked.connect(self.accept)
+        footer.addWidget(btn_close)
+        layout.addLayout(footer)
+
+    def _refresh_table(self, *_args):
+        _bt = _t()
+        ay_value = self._ay_combo.currentData()
+        search = self._search.text().strip().lower()
+        clients = self._vault.get_all_assessees()
+        by_pan = {c.get("pan", "").upper(): c for c in clients}
+
+        rows = []
+        if ay_value:
+            # One row per known client, whether or not they've been checked
+            # yet — "⚠ Not yet checked" is itself useful information, not
+            # something to hide until a first check happens to have run.
+            status_map = self._vault.get_return_status(ay_value)
+            for c in clients:
+                pan = c.get("pan", "").upper()
+                entry = status_map.get(pan)
+                rows.append({
+                    "pan": pan, "name": c.get("name", ""), "ay": ay_value,
+                    "status": entry.get("status", "") if entry else "",
+                    "ts": entry.get("ts", "") if entry else "",
+                })
+        else:
+            # "All Years" is a browse of everything ever checked — not every
+            # client × every enabled year, which would mostly be noise for
+            # years nobody has asked about yet.
+            for pan, ay_map in self._vault.get_return_status_all().items():
+                client = by_pan.get(pan)
+                name = client.get("name", "") if client else ""
+                for ay_label, entry in ay_map.items():
+                    rows.append({
+                        "pan": pan, "name": name, "ay": ay_label,
+                        "status": entry.get("status", ""), "ts": entry.get("ts", ""),
+                    })
+            rows.sort(key=lambda r: (r["name"].lower(), r["ay"]))
+
+        if search:
+            rows = [r for r in rows if search in r["name"].lower() or search in r["pan"].lower()]
+
+        self._row_data = rows
+        allow_select = bool(ay_value)
+        self._table.setRowCount(len(rows))
+        for i, r in enumerate(rows):
+            self._table.setRowHeight(i, 34)
+
+            key = (r["pan"], r["ay"])
+            chk = QCheckBox()
+            chk.setEnabled(allow_select)
+            chk.setChecked(key in self._checked_keys)
+            chk.setStyleSheet(
+                f"QCheckBox{{background:transparent;}}"
+                f"QCheckBox::indicator{{width:15px;height:15px;border:1.5px solid {_bt.border};"
+                f"border-radius:3px;background:{_bt.bg_checkbox};}}"
+                f"QCheckBox::indicator:checked{{background:{_bt.accent};border-color:{_bt.accent};}}"
+                f"QCheckBox::indicator:disabled{{background:{_bt.border};}}")
+            chk.stateChanged.connect(
+                lambda state, k=key: self._checked_keys.add(k) if state
+                else self._checked_keys.discard(k))
+            self._table.setCellWidget(i, self._COL_CHECK, chk)
+
+            pan_item = QTableWidgetItem(r["pan"])
+            pan_item.setFont(QFont(_MONO_FONT, 10))
+            pan_item.setForeground(QColor(_bt.text_muted))
+            self._table.setItem(i, self._COL_PAN, pan_item)
+
+            name_item = QTableWidgetItem(r["name"] or "⚠ Unknown PAN")
+            name_item.setForeground(QColor(_bt.text_primary if r["name"] else
+                                            getattr(_bt, "warning", "#D97706")))
+            self._table.setItem(i, self._COL_NAME, name_item)
+
+            ay_item = QTableWidgetItem(r["ay"])
+            ay_item.setForeground(QColor(_bt.text_primary))
+            self._table.setItem(i, self._COL_AY, ay_item)
+
+            status_text = r["status"] or "⚠ Not yet checked"
+            status_item = QTableWidgetItem(status_text)
+            status_item.setForeground(QColor(_bt.text_primary if r["status"] else
+                                              getattr(_bt, "warning", "#D97706")))
+            self._table.setItem(i, self._COL_STATUS, status_item)
+
+            ts_item = QTableWidgetItem(r["ts"] or "—")
+            ts_item.setForeground(QColor(_bt.text_muted))
+            self._table.setItem(i, self._COL_LAST_CHECKED, ts_item)
+
+        self._btn_update.setEnabled(allow_select)
+        self._counts_label.setText(f"Rows: {len(rows)}")
+
+    def _on_update_clicked(self):
+        ay_value = self._ay_combo.currentData()
+        if not ay_value:
+            return
+        # Scoped to the CURRENT AY only — _checked_keys can still hold
+        # selections made while a different Year was picked (persisted
+        # across _refresh_table() rebuilds deliberately, see __init__), but
+        # one Update run must never mix years across its rows.
+        selected_pans = [pan for (pan, ay) in self._checked_keys if ay == ay_value]
+        if not selected_pans:
+            QMessageBox.information(self, "Nothing Selected",
+                                     "Select at least one client to update.")
+            return
+
+        by_pan = {c.get("pan", "").upper(): c for c in self._vault.get_all_assessees()}
+        targets = [by_pan[p] for p in selected_pans if p in by_pan]
+        if not targets:
+            QMessageBox.warning(self, "Nothing to Update",
+                                 "None of the selected clients could be matched in Client Master.")
+            return
+
+        parent = self.parent()
+        if parent is not None and hasattr(parent, "start_return_status_check"):
+            parent.start_return_status_check(ay_value, targets, on_done=self._refresh_table)

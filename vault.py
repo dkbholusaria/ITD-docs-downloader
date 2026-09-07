@@ -331,6 +331,48 @@ class VaultManager:
             }
         return summary
 
+    # --- ITR Processing Status (F-67) ---
+    # Separate top-level key from download_history — this isn't a document
+    # download record, it's the portal's own status-timeline text for a
+    # client/AY, refreshed by an explicit "Update" action, not implied by
+    # any download having happened.
+
+    def record_return_status(self, pan: str, ay_label: str, status: str,
+                              filing_date: str = "", ack_no: str = ""):
+        """Record the latest known ITR processing status for a client/AY.
+        `ts` is when THIS app last checked, not the portal's own filing or
+        processing date (those are `filing_date`/whatever `status` itself
+        says)."""
+        raw_data = self._get_raw()
+        pan = pan.strip().upper()
+        hist = raw_data.setdefault("return_status_history", {})
+        ay_map = hist.setdefault(pan, {})
+        ay_map[ay_label] = {
+            "status": status,
+            "filing_date": filing_date,
+            "ack_no": ack_no,
+            "ts": datetime.datetime.now().strftime("%d-%b-%Y %H:%M:%S"),
+        }
+        self._save_raw(raw_data)
+
+    def get_return_status(self, ay_label: str) -> dict:
+        """{pan: {"status", "filing_date", "ack_no", "ts"}} for one AY —
+        only clients that have actually been checked at least once."""
+        raw_data = self._get_raw()
+        hist = raw_data.get("return_status_history", {})
+        return {
+            pan: ay_map[ay_label]
+            for pan, ay_map in hist.items()
+            if ay_label in ay_map
+        }
+
+    def get_return_status_all(self) -> dict:
+        """{pan: {ay_label: {"status", "filing_date", "ack_no", "ts"}}} —
+        every client/AY ever checked, for the status window's "All Years"
+        view."""
+        raw_data = self._get_raw()
+        return raw_data.get("return_status_history", {})
+
     # --- Bulk Import / Export ---
 
     def import_bulk(self, file_path: str) -> tuple:
