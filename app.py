@@ -20,9 +20,13 @@ from PyQt6.QtWidgets import (
     QHBoxLayout, QVBoxLayout,
     QMessageBox, QTextEdit, QDialog, QSizePolicy,
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
-    QToolButton, QMenu, QCalendarWidget, QSystemTrayIcon, QSplashScreen,
+    QToolButton, QMenu, QCalendarWidget, QSystemTrayIcon,
+    QGraphicsDropShadowEffect,
 )
-from PyQt6.QtCore import Qt, pyqtSignal, pyqtSlot, QTimer, QMetaObject, Q_ARG, QUrl
+from PyQt6.QtCore import (
+    Qt, pyqtSignal, pyqtSlot, QTimer, QMetaObject, Q_ARG, QUrl,
+    QPropertyAnimation, QEasingCurve,
+)
 from PyQt6.QtGui import QFont, QTextCursor, QColor, QRegularExpressionValidator, QPalette, QAction, QIcon, QPixmap, QDesktopServices
 from PyQt6.QtCore import QRegularExpression
 
@@ -3778,6 +3782,95 @@ class AayDocCapioApp(QMainWindow):
             pass
 
 
+class _SplashScreen(QWidget):
+    """Startup splash — the wordmark logo with a pulsing gold glow behind
+    it, an animated "Starting AayDocCapio..." dot cycle, and fade in/out,
+    shown while AayDocCapioApp() (imports Playwright, builds the full main
+    window) is still constructing. Deliberately a plain QWidget rather than
+    QSplashScreen — QSplashScreen has no easy way to layer a QGraphicsEffect
+    or animate its own opacity, both needed here."""
+
+    def __init__(self, pixmap: QPixmap):
+        super().__init__(
+            None,
+            Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.SplashScreen)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(40, 36, 40, 28)
+        outer.setSpacing(12)
+
+        logo_label = QLabel()
+        logo_label.setPixmap(pixmap)
+        logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # Soft gold glow (brand accent) behind the logo — pulses via the
+        # blurRadius animation below rather than sitting static.
+        self._glow = QGraphicsDropShadowEffect(self)
+        self._glow.setColor(QColor("#E8B84B"))
+        self._glow.setOffset(0, 0)
+        self._glow.setBlurRadius(20)
+        logo_label.setGraphicsEffect(self._glow)
+        outer.addWidget(logo_label)
+
+        self._status_label = QLabel("Starting AayDocCapio")
+        self._status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._status_label.setStyleSheet(
+            "color:#5B6472;font-size:13px;background:transparent;")
+        outer.addWidget(self._status_label)
+
+        self.setFixedSize(pixmap.width() + 80, pixmap.height() + 96)
+        self.setWindowOpacity(0.0)
+
+        self._dot_count = 0
+        self._dot_timer = QTimer(self)
+        self._dot_timer.timeout.connect(self._tick_dots)
+        self._dot_timer.start(450)
+
+        # Pulse: one QPropertyAnimation loop, low -> high -> low blur, so
+        # it reads as breathing rather than a static halo.
+        self._glow_anim = QPropertyAnimation(self._glow, b"blurRadius", self)
+        self._glow_anim.setDuration(1400)
+        self._glow_anim.setKeyValueAt(0.0, 18)
+        self._glow_anim.setKeyValueAt(0.5, 55)
+        self._glow_anim.setKeyValueAt(1.0, 18)
+        self._glow_anim.setEasingCurve(QEasingCurve.Type.InOutSine)
+        self._glow_anim.setLoopCount(-1)
+        self._glow_anim.start()
+
+        self._fade_anim = None  # kept alive on self so it isn't GC'd mid-animation
+
+    def _tick_dots(self):
+        self._dot_count = (self._dot_count + 1) % 4
+        self._status_label.setText("Starting AayDocCapio" + "." * self._dot_count)
+
+    def fade_in(self):
+        self.show()
+        anim = QPropertyAnimation(self, b"windowOpacity", self)
+        anim.setDuration(350)
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        anim.start()
+        self._fade_anim = anim
+
+    def finish(self, window):
+        """Fades out and closes — named/shaped like QSplashScreen.finish()
+        for a familiar call site, but doesn't block: the fade plays out
+        during app.exec()'s own event loop instead of freezing startup."""
+        self._dot_timer.stop()
+        self._glow_anim.stop()
+        anim = QPropertyAnimation(self, b"windowOpacity", self)
+        anim.setDuration(300)
+        anim.setStartValue(1.0)
+        anim.setEndValue(0.0)
+        anim.setEasingCurve(QEasingCurve.Type.InCubic)
+        anim.finished.connect(self.close)
+        anim.start()
+        self._fade_anim = anim
+
+
 def _fatal(msg: str):
     """Show a visible error dialog even before QApplication exists, then exit."""
     try:
@@ -3866,13 +3959,8 @@ if __name__ == "__main__":
             if os.path.exists(_splash_logo_path):
                 _splash_pix = QPixmap(_splash_logo_path).scaledToWidth(
                     560, Qt.TransformationMode.SmoothTransformation)
-                splash = QSplashScreen(_splash_pix)
-                splash.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
-                splash.showMessage(
-                    "Starting AayDocCapio…",
-                    Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter,
-                    QColor("#5B6472"))
-                splash.show()
+                splash = _SplashScreen(_splash_pix)
+                splash.fade_in()
                 app.processEvents()
         except Exception as _splash_err:
             _diag(f"Splash screen skipped: {_splash_err}")
