@@ -235,21 +235,29 @@ class ManageGroupsDialog(QDialog):
             10, color=t.text_muted))
 
         # ── Upper deck: Groups ───────────────────────────────────────────
+        # A real QListWidget (not a manually-stacked QVBoxLayout of rows)
+        # so Up/Down arrow keys move between groups for free — confirmed
+        # live that the earlier plain-widget-row version had no keyboard
+        # navigation at all. Rename/Delete stay as per-row buttons via
+        # setItemWidget(); the list's own selection visuals are suppressed
+        # (background: transparent) in favor of the same manual
+        # accent-highlight the row widget already painted before, so the
+        # look is unchanged — only the navigation mechanics are new.
         main.addWidget(_lbl("Groups", 11, bold=True, color=t.text_muted))
-        groups_scroll = QScrollArea()
-        groups_scroll.setWidgetResizable(True)
-        groups_scroll.setFixedHeight(200)
-        groups_scroll.setStyleSheet(
-            f"QScrollArea{{background:{t.bg_input};border:1px solid {t.border};border-radius:6px;}}"
-            f"QScrollArea > QWidget > QWidget{{background:{t.bg_input};}}")
-        groups_inner = QWidget()
-        groups_inner.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        groups_inner.setStyleSheet(f"QWidget{{background:{t.bg_input};}}")
-        self._groups_layout = QVBoxLayout(groups_inner)
-        self._groups_layout.setSpacing(4)
-        self._groups_layout.addStretch()
-        groups_scroll.setWidget(groups_inner)
-        main.addWidget(groups_scroll)
+        from PyQt6.QtWidgets import QListWidget, QListWidgetItem
+        from PyQt6.QtCore import QSize
+        self._groups_list = QListWidget()
+        self._groups_list.setFixedHeight(200)
+        self._groups_list.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self._groups_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._groups_list.setStyleSheet(
+            f"QListWidget{{background:{t.bg_input};border:1px solid {t.border};"
+            f"border-radius:6px;outline:0;padding:4px;}}"
+            f"QListWidget::item{{border:none;padding:0;margin:2px 0;}}"
+            f"QListWidget::item:selected{{background:transparent;}}"
+            f"QListWidget::item:hover{{background:transparent;}}")
+        self._groups_list.currentItemChanged.connect(self._on_group_selection_changed)
+        main.addWidget(self._groups_list)
 
         # Lets a group be created ahead of assigning any client to it —
         # otherwise the only way to create one was from inside a client's
@@ -317,15 +325,23 @@ class ManageGroupsDialog(QDialog):
         self._refresh_groups()
         self._refresh_clients()
 
-    def _clear_group_rows(self):
-        while self._groups_layout.count() > 1:
-            item = self._groups_layout.takeAt(0)
-            w = item.widget()
-            if w:
-                w.deleteLater()
+    def _on_group_selection_changed(self, current, _previous):
+        """Fires on a click OR an arrow-key move (QListWidget handles both
+        natively) — never re-entrantly from _refresh_groups() itself,
+        since that rebuild runs with signals blocked."""
+        if current is None:
+            return
+        group = current.data(Qt.ItemDataRole.UserRole)
+        if group == self._selected_group:
+            return
+        self._selected_group = group
+        self._refresh_groups()   # redraw highlight
+        self._refresh_clients()
 
     def _refresh_groups(self):
-        self._clear_group_rows()
+        from PyQt6.QtWidgets import QListWidgetItem
+        from PyQt6.QtCore import QSize
+
         groups = self._vault.get_all_groups()
         if self._selected_group and self._selected_group not in groups:
             self._selected_group = ""  # e.g. the selected group was just deleted
@@ -336,40 +352,50 @@ class ManageGroupsDialog(QDialog):
             if g:
                 counts[g] = counts.get(g, 0) + 1
 
+        self._groups_list.blockSignals(True)
+        self._groups_list.clear()
+
         if not groups:
             t = _t()
-            empty_lbl = _lbl(
-                'No groups yet — type a name below and click "Add Group" to '
-                "create one.", 11, color=t.text_muted)
-            empty_lbl.setWordWrap(True)
-            self._groups_layout.insertWidget(0, empty_lbl)
+            item = QListWidgetItem(
+                'No groups yet — type a name below and click "Add Group" to create one.')
+            item.setFlags(Qt.ItemFlag.NoItemFlags)
+            item.setForeground(QColor(t.text_muted))
+            self._groups_list.addItem(item)
+            self._groups_list.blockSignals(False)
             return
 
-        for g in groups:
-            self._add_group_row(g, counts.get(g, 0))
+        selected_row = -1
+        for i, g in enumerate(groups):
+            item = QListWidgetItem()
+            item.setData(Qt.ItemDataRole.UserRole, g)
+            item.setSizeHint(QSize(0, 40))
+            self._groups_list.addItem(item)
+            self._groups_list.setItemWidget(item, self._make_group_row_widget(g, counts.get(g, 0)))
+            if g == self._selected_group:
+                selected_row = i
+        if selected_row >= 0:
+            self._groups_list.setCurrentRow(selected_row)
+        self._groups_list.blockSignals(False)
 
-    def _add_group_row(self, group, count):
+    def _make_group_row_widget(self, group: str, count: int) -> QWidget:
         t = _t()
         is_selected = group == self._selected_group
         row = QWidget()
         row.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        row.setStyleSheet(f"QWidget{{background:{t.bg_input};}}")
+        row.setStyleSheet(
+            f"QWidget{{background:{t.accent if is_selected else 'transparent'};border-radius:4px;}}")
         hl = QHBoxLayout(row)
-        hl.setContentsMargins(4, 2, 4, 2)
+        hl.setContentsMargins(8, 2, 4, 2)
         hl.setSpacing(8)
 
         plural = "s" if count != 1 else ""
-        select_btn = QPushButton(f"{group}   ({count} client{plural})")
-        select_btn.setFlat(True)
-        select_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        select_btn.setStyleSheet(
-            f"QPushButton{{text-align:left;border:none;border-radius:4px;padding:6px 8px;"
-            f"font-size:12px;font-weight:{'700' if is_selected else '400'};"
-            f"background:{t.accent if is_selected else 'transparent'};"
-            f"color:{t.accent_text if is_selected else t.text_primary};}}"
-            f"QPushButton:hover{{background:{t.accent if is_selected else t.bg_table_alt};}}")
-        select_btn.clicked.connect(lambda _, g=group: self._select_group(g))
-        hl.addWidget(select_btn, 1)
+        lbl = QLabel(f"{group}   ({count} client{plural})")
+        lbl.setStyleSheet(
+            f"background:transparent;font-size:12px;"
+            f"font-weight:{'700' if is_selected else '400'};"
+            f"color:{t.accent_text if is_selected else t.text_primary};")
+        hl.addWidget(lbl, 1)
 
         rename_btn = _btn("Rename", "outline", height=28)
         rename_btn.clicked.connect(lambda _, g=group: self._rename(g))
@@ -377,12 +403,7 @@ class ManageGroupsDialog(QDialog):
         delete_btn = _btn("Delete", "danger", height=28)
         delete_btn.clicked.connect(lambda _, g=group: self._delete(g))
         hl.addWidget(delete_btn)
-        self._groups_layout.insertWidget(self._groups_layout.count() - 1, row)
-
-    def _select_group(self, group: str):
-        self._selected_group = group
-        self._refresh_groups()   # redraw highlight
-        self._refresh_clients()
+        return row
 
     def _rename(self, old: str):
         from PyQt6.QtWidgets import QInputDialog
