@@ -37,19 +37,24 @@ from automation.downloader_filed_returns import (
 async def _read_latest_status_text(card, step) -> str:
     """Confirmed markup (shared with _is_discarded/_is_return_verified in
     downloader_filed_returns.py): one .matStepStatus element per step on the
-    filing's status timeline. UNCONFIRMED assumption, flagged for live
-    verification: the LAST rendered step is the most advanced stage reached
-    (Angular Material steppers render steps in chronological order) — so
-    this reports that one's text verbatim as "the current status", not a
-    keyword match against a known list. If live testing shows steps aren't
-    always in that order, this is the one thing to fix here."""
+    filing's status timeline. BUG FIX (2026-09-07): confirmed live (a real
+    portal screenshot, client Santosh Kumari Malik, AY 2026-27) — the
+    timeline renders NEWEST-first, not chronological: "Processed with no
+    demand/refund" (Aug 3) appeared above "Successfully e-Verified" (Jul 29)
+    which appeared above "Pending for e-Verification" (also Jul 29, the
+    earliest step). The original code took the LAST step assuming
+    oldest-to-newest order, which reported "Pending for e-Verification" —
+    the very first, most outdated step — as the client's current status,
+    even though the return was actually already fully processed. Now reads
+    the FIRST step instead, which is the most advanced one actually
+    reached."""
     try:
         statuses = card.locator(".matStepStatus")
         count = await statuses.count()
         if count == 0:
             step("No .matStepStatus steps found on this card")
             return ""
-        text = (await statuses.nth(count - 1).inner_text() or "").strip()
+        text = (await statuses.nth(0).inner_text() or "").strip()
         step(f"Latest status step ({count} total): '{text}'")
         return text
     except Exception as e:
