@@ -5040,10 +5040,31 @@ class ReturnStatusDialog(QDialog):
         self._counts_label = QLabel("")
         self._counts_label.setStyleSheet(f"color:{_bt.text_muted};font-size:12px;background:transparent;")
         footer.addWidget(self._counts_label, 1)
+        self._sel_all_btn = _btn("Select All", "outline")
+        self._sel_all_btn.clicked.connect(self._select_all)
+        footer.addWidget(self._sel_all_btn)
+        self._sel_none_btn = _btn("Select None", "outline")
+        self._sel_none_btn.clicked.connect(self._select_none)
+        footer.addWidget(self._sel_none_btn)
         btn_close = _btn("Close", "outline")
         btn_close.clicked.connect(self.accept)
         footer.addWidget(btn_close)
         layout.addLayout(footer)
+
+    def _select_all(self):
+        # No-op in the "All Years" view — every checkbox there is disabled
+        # (isEnabled() reflects allow_select from _refresh_table), matching
+        # the existing rule that only a specific Year's rows can be picked.
+        for i in range(self._table.rowCount()):
+            chk = self._table.cellWidget(i, self._COL_CHECK)
+            if chk and chk.isEnabled():
+                chk.setChecked(True)
+
+    def _select_none(self):
+        for i in range(self._table.rowCount()):
+            chk = self._table.cellWidget(i, self._COL_CHECK)
+            if chk:
+                chk.setChecked(False)
 
     def _refresh_table(self, *_args):
         _bt = _t()
