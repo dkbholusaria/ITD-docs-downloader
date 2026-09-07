@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout, QVBoxLayout,
     QMessageBox, QTextEdit, QDialog, QSizePolicy,
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
-    QToolButton, QMenu, QCalendarWidget, QSystemTrayIcon,
+    QToolButton, QMenu, QCalendarWidget, QSystemTrayIcon, QSplashScreen,
 )
 from PyQt6.QtCore import Qt, pyqtSignal, pyqtSlot, QTimer, QMetaObject, Q_ARG, QUrl
 from PyQt6.QtGui import QFont, QTextCursor, QColor, QRegularExpressionValidator, QPalette, QAction, QIcon, QPixmap, QDesktopServices
@@ -3855,6 +3855,28 @@ if __name__ == "__main__":
             _sys.stderr.write(msg + "\n")
         qInstallMessageHandler(_qt_msg_filter)
         app = QApplication(sys.argv)
+        _diag("Step 1b: splash screen")
+        # Shown immediately, before the (noticeably slower) font/theme/
+        # AayDocCapioApp() construction steps below — those import
+        # Playwright and build the full main window, which can take a
+        # visible moment with nothing else on screen otherwise.
+        splash = None
+        try:
+            _splash_logo_path = os.path.join(_bundled_dir(), "resources", "AayDoc_FullLogo.png")
+            if os.path.exists(_splash_logo_path):
+                _splash_pix = QPixmap(_splash_logo_path).scaledToWidth(
+                    560, Qt.TransformationMode.SmoothTransformation)
+                splash = QSplashScreen(_splash_pix)
+                splash.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+                splash.showMessage(
+                    "Starting AayDocCapio…",
+                    Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter,
+                    QColor("#5B6472"))
+                splash.show()
+                app.processEvents()
+        except Exception as _splash_err:
+            _diag(f"Splash screen skipped: {_splash_err}")
+            splash = None
         _diag("Step 2: setApplicationName")
         app.setApplicationName("AayDocCapio")
         app.setDesktopFileName("aay-doc-capio")
@@ -3885,6 +3907,11 @@ if __name__ == "__main__":
             window.setWindowIcon(_icon)
         _diag("Step 7: window.show()")
         window.show()
+        if splash is not None:
+            # finish() closes the splash the moment `window` is shown/
+            # active rather than needing a manual timer to guess when
+            # startup is "done".
+            splash.finish(window)
         _diag("Step 8: app.exec() — entering event loop")
         sys.exit(app.exec())
     except Exception as _startup_err:
