@@ -194,50 +194,67 @@ class ManageYearsDialog(QDialog):
 # ── Manage Groups Dialog (F-11) ────────────────────────────────────────────────
 
 class ManageGroupsDialog(QDialog):
-    """Client Master > Manage Groups… — rename or delete a group. Unlike
-    ManageYearsDialog, changes apply immediately to the vault (via
-    vault.rename_group/clear_group) rather than being staged and written
-    on a single Save & Close, since a group is just a shared value of each
-    client's own "group" field, not a separate managed list needing its
-    own save step."""
+    """Client Master > Manage Groups… — two decks, confirmed live per the
+    user's own description: an upper deck listing every group (the
+    "mother"), and a lower deck showing/editing which clients currently
+    belong to whichever group is selected above (the "children") —
+    replacing the earlier rename/delete-only list, which had no way to
+    actually see or change a group's membership at all.
+
+    Changes apply immediately to the vault (rename_group/clear_group/
+    set_client_group) rather than being staged and written on a single
+    Save & Close, since a group is just a shared value of each client's
+    own "group" field, not a separate managed list needing its own save
+    step."""
 
     def __init__(self, parent, vault):
         super().__init__(parent)
         self._vault = vault
+        self._selected_group: str = ""
         self.setWindowTitle("Manage Groups")
-        self.setFixedSize(460, 520)
+        self.setMinimumSize(520, 620)
+        self.resize(560, 700)
+        self.setSizeGripEnabled(True)
         self.setModal(True)
         self._build_ui()
-        self._refresh_list()
+        self._refresh_groups()
 
     def _build_ui(self):
         t = _t()
-        self.setStyleSheet(f"QDialog{{background:{t.bg_window};}}"
-                            f"QLabel{{color:{t.text_primary};background:transparent;}}")
+        self.setStyleSheet(
+            f"QDialog{{background:{t.bg_window};}}"
+            f"QLabel{{color:{t.text_primary};background:transparent;}}"
+            f"QCheckBox{{color:{t.text_primary};background:transparent;spacing:8px;}}"
+            f"QCheckBox::indicator{{width:15px;height:15px;border:1.5px solid {t.border};"
+            f"border-radius:3px;background:{t.bg_checkbox};}}"
+            f"QCheckBox::indicator:checked{{background:{t.accent};border-color:{t.accent};}}")
         main = QVBoxLayout(self)
         main.setContentsMargins(20, 16, 20, 16)
         main.setSpacing(8)
 
         main.addWidget(_lbl("Manage Groups", 13, bold=True))
         main.addWidget(_lbl(
-            "Rename or delete a group. Deleting only un-groups its clients "
-            "— it never deletes the clients themselves.", 10, color=t.text_muted))
+            "Select a group below to see and edit which clients belong to it. "
+            "Deleting a group only un-groups its clients — it never deletes them.",
+            10, color=t.text_muted))
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setStyleSheet(
+        # ── Upper deck: Groups ───────────────────────────────────────────
+        main.addWidget(_lbl("Groups", 11, bold=True, color=t.text_muted))
+        groups_scroll = QScrollArea()
+        groups_scroll.setWidgetResizable(True)
+        groups_scroll.setFixedHeight(200)
+        groups_scroll.setStyleSheet(
             f"QScrollArea{{background:{t.bg_input};border:1px solid {t.border};border-radius:6px;}}"
             f"QScrollArea > QWidget > QWidget{{background:{t.bg_input};}}")
-        inner = QWidget()
-        inner.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        inner.setStyleSheet(f"QWidget{{background:{t.bg_input};}}")
-        self._list_layout = QVBoxLayout(inner)
-        self._list_layout.setSpacing(4)
-        self._list_layout.addStretch()
-        scroll.setWidget(inner)
-        main.addWidget(scroll, 1)
+        groups_inner = QWidget()
+        groups_inner.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        groups_inner.setStyleSheet(f"QWidget{{background:{t.bg_input};}}")
+        self._groups_layout = QVBoxLayout(groups_inner)
+        self._groups_layout.setSpacing(4)
+        self._groups_layout.addStretch()
+        groups_scroll.setWidget(groups_inner)
+        main.addWidget(groups_scroll)
 
-        # ── Add Group ─────────────────────────────────────────────────────
         # Lets a group be created ahead of assigning any client to it —
         # otherwise the only way to create one was from inside a client's
         # own Group field, and this list would stay empty until the first
@@ -254,12 +271,43 @@ class ManageGroupsDialog(QDialog):
         add_row.addWidget(add_group_btn)
         main.addLayout(add_row)
 
+        sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet(f"background:{t.border};border:none;max-height:1px;")
+        main.addWidget(sep)
+
+        # ── Lower deck: Clients in the selected group ────────────────────
+        self._clients_header = _lbl("Clients", 11, bold=True, color=t.text_muted)
+        main.addWidget(self._clients_header)
+
+        self._client_search = QLineEdit()
+        self._client_search.setPlaceholderText("🔍  Search by name or PAN...")
+        self._client_search.setClearButtonEnabled(True)
+        self._client_search.setFixedHeight(28)
+        self._client_search.textChanged.connect(self._refresh_clients)
+        main.addWidget(self._client_search)
+
+        clients_scroll = QScrollArea()
+        clients_scroll.setWidgetResizable(True)
+        clients_scroll.setStyleSheet(
+            f"QScrollArea{{background:{t.bg_input};border:1px solid {t.border};border-radius:6px;}}"
+            f"QScrollArea > QWidget > QWidget{{background:{t.bg_input};}}")
+        clients_inner = QWidget()
+        clients_inner.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        clients_inner.setStyleSheet(f"QWidget{{background:{t.bg_input};}}")
+        self._clients_layout = QVBoxLayout(clients_inner)
+        self._clients_layout.setSpacing(2)
+        self._clients_layout.addStretch()
+        clients_scroll.setWidget(clients_inner)
+        main.addWidget(clients_scroll, 1)
+
         btns_row = QHBoxLayout()
         btns_row.addStretch()
         close_btn = _btn("Close", "primary", height=36)
         close_btn.clicked.connect(self.accept)
         btns_row.addWidget(close_btn)
         main.addLayout(btns_row)
+
+    # ── Upper deck: Groups ────────────────────────────────────────────────
 
     def _add_group(self):
         name = self._new_group_edit.text().strip()
@@ -269,18 +317,23 @@ class ManageGroupsDialog(QDialog):
             QMessageBox.warning(self, "Group Exists", f'"{name}" already exists.')
             return
         self._new_group_edit.clear()
-        self._refresh_list()
+        self._selected_group = name  # jump straight to assigning clients to it
+        self._refresh_groups()
+        self._refresh_clients()
 
-    def _clear_rows(self):
-        while self._list_layout.count() > 1:
-            item = self._list_layout.takeAt(0)
+    def _clear_group_rows(self):
+        while self._groups_layout.count() > 1:
+            item = self._groups_layout.takeAt(0)
             w = item.widget()
             if w:
                 w.deleteLater()
 
-    def _refresh_list(self):
-        self._clear_rows()
+    def _refresh_groups(self):
+        self._clear_group_rows()
         groups = self._vault.get_all_groups()
+        if self._selected_group and self._selected_group not in groups:
+            self._selected_group = ""  # e.g. the selected group was just deleted
+
         counts = {}
         for a in self._vault.get_all_assessees():
             g = a.get("group", "").strip()
@@ -290,33 +343,50 @@ class ManageGroupsDialog(QDialog):
         if not groups:
             t = _t()
             empty_lbl = _lbl(
-                "No groups yet — assign one from Add/Edit Client or "
-                '"Assign to Group…" in the main window.', 11, color=t.text_muted)
+                'No groups yet — type a name below and click "Add Group" to '
+                "create one.", 11, color=t.text_muted)
             empty_lbl.setWordWrap(True)
-            self._list_layout.insertWidget(0, empty_lbl)
+            self._groups_layout.insertWidget(0, empty_lbl)
             return
 
         for g in groups:
-            self._add_row(g, counts.get(g, 0))
+            self._add_group_row(g, counts.get(g, 0))
 
-    def _add_row(self, group, count):
+    def _add_group_row(self, group, count):
         t = _t()
+        is_selected = group == self._selected_group
         row = QWidget()
         row.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         row.setStyleSheet(f"QWidget{{background:{t.bg_input};}}")
         hl = QHBoxLayout(row)
         hl.setContentsMargins(4, 2, 4, 2)
         hl.setSpacing(8)
+
         plural = "s" if count != 1 else ""
-        lbl = QLabel(f"{group}  ({count} client{plural})")
-        hl.addWidget(lbl, 1)
+        select_btn = QPushButton(f"{group}   ({count} client{plural})")
+        select_btn.setFlat(True)
+        select_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        select_btn.setStyleSheet(
+            f"QPushButton{{text-align:left;border:none;border-radius:4px;padding:6px 8px;"
+            f"font-size:12px;font-weight:{'700' if is_selected else '400'};"
+            f"background:{t.accent if is_selected else 'transparent'};"
+            f"color:{t.accent_text if is_selected else t.text_primary};}}"
+            f"QPushButton:hover{{background:{t.accent if is_selected else t.bg_table_alt};}}")
+        select_btn.clicked.connect(lambda _, g=group: self._select_group(g))
+        hl.addWidget(select_btn, 1)
+
         rename_btn = _btn("Rename", "outline", height=28)
         rename_btn.clicked.connect(lambda _, g=group: self._rename(g))
         hl.addWidget(rename_btn)
         delete_btn = _btn("Delete", "danger", height=28)
         delete_btn.clicked.connect(lambda _, g=group: self._delete(g))
         hl.addWidget(delete_btn)
-        self._list_layout.insertWidget(self._list_layout.count() - 1, row)
+        self._groups_layout.insertWidget(self._groups_layout.count() - 1, row)
+
+    def _select_group(self, group: str):
+        self._selected_group = group
+        self._refresh_groups()   # redraw highlight
+        self._refresh_clients()
 
     def _rename(self, old: str):
         from PyQt6.QtWidgets import QInputDialog
@@ -334,7 +404,10 @@ class ManageGroupsDialog(QDialog):
                ) != QMessageBox.StandardButton.Yes:
                 return
         self._vault.rename_group(old, new)
-        self._refresh_list()
+        if self._selected_group == old:
+            self._selected_group = new
+        self._refresh_groups()
+        self._refresh_clients()
 
     def _delete(self, group: str):
         count = sum(1 for a in self._vault.get_all_assessees()
@@ -346,7 +419,66 @@ class ManageGroupsDialog(QDialog):
            ) != QMessageBox.StandardButton.Yes:
             return
         self._vault.clear_group(group)
-        self._refresh_list()
+        if self._selected_group == group:
+            self._selected_group = ""
+        self._refresh_groups()
+        self._refresh_clients()
+
+    # ── Lower deck: Clients in the selected group ─────────────────────────
+
+    def _clear_client_rows(self):
+        while self._clients_layout.count() > 1:
+            item = self._clients_layout.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+
+    def _refresh_clients(self, *_args):
+        self._clear_client_rows()
+        t = _t()
+        if not self._selected_group:
+            self._clients_header.setText("Clients")
+            placeholder = _lbl(
+                "Select a group above to see and edit its clients.", 11, color=t.text_muted)
+            placeholder.setWordWrap(True)
+            self._clients_layout.insertWidget(0, placeholder)
+            return
+
+        self._clients_header.setText(f'Clients in "{self._selected_group}"')
+        search = self._client_search.text().strip().lower()
+        clients = self._vault.get_all_assessees()
+        if search:
+            clients = [c for c in clients
+                       if search in c.get("name", "").lower() or search in c.get("pan", "").lower()]
+        clients.sort(key=lambda c: c.get("name", "").lower())
+
+        if not clients:
+            empty_lbl = _lbl("No clients match your search.", 11, color=t.text_muted)
+            self._clients_layout.insertWidget(0, empty_lbl)
+            return
+
+        for c in clients:
+            self._add_client_row(c)
+
+    def _add_client_row(self, client: dict):
+        t = _t()
+        row = QWidget()
+        row.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        row.setStyleSheet(f"QWidget{{background:{t.bg_input};}}")
+        hl = QHBoxLayout(row)
+        hl.setContentsMargins(4, 2, 4, 2)
+
+        chk = QCheckBox(f"{client.get('name', '')}   ({client.get('pan', '')})")
+        chk.setChecked(client.get("group", "").strip() == self._selected_group)
+        chk.toggled.connect(lambda checked, cid=client.get("id"): self._toggle_client(cid, checked))
+        hl.addWidget(chk, 1)
+        self._clients_layout.insertWidget(self._clients_layout.count() - 1, row)
+
+    def _toggle_client(self, client_id: str, checked: bool):
+        self._vault.set_client_group(client_id, self._selected_group if checked else "")
+        # Only the groups deck's counts need refreshing here — rebuilding
+        # the clients deck too would tear down the checkbox mid-click.
+        self._refresh_groups()
 
 
 # ── Batch Progress Dialog ─────────────────────────────────────────────────────
