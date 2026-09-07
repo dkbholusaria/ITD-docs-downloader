@@ -587,7 +587,9 @@ class VaultManager:
             "Group",
             "  Optional — e.g. a family or firm name (\"Bholusaria Family\"). Leave "
             "blank if this client isn't part of a group. Importing the same group "
-            "name for several clients groups them together in the app.",
+            "name for several clients groups them together in the app. (The Excel "
+            "version of this template has a separate \"Groups\" sheet and a "
+            "dropdown here instead of free text — CSV doesn't support that.)",
             "",
             "PAN",
             "  The client's 10-character PAN, e.g. AAAPT0001A. If a PAN already "
@@ -631,6 +633,7 @@ class VaultManager:
 
         from openpyxl import Workbook
         from openpyxl.worksheet.table import Table, TableStyleInfo
+        from openpyxl.worksheet.datavalidation import DataValidation
         from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
         from openpyxl.utils import get_column_letter
 
@@ -657,6 +660,34 @@ class VaultManager:
         for row_cells in ws.iter_rows(min_row=2, max_row=max(table_last_row, 2), max_col=len(headers)):
             for cell in row_cells:
                 cell.alignment = Alignment(vertical="center")
+
+        # ── "Groups" sheet — user-editable list backing the Group column's ──
+        # dropdown on "Clients". Confirmed live: the user wanted a real
+        # sheet to add group names to, not just a free-text cell — pre-
+        # filled with whatever groups already exist in the app, with
+        # headroom to type in new ones directly here before picking them
+        # on the Clients sheet. Unlike the challan template's hidden
+        # "Lists" sheet, this one is deliberately left VISIBLE and
+        # editable, since adding a group here is itself part of the
+        # intended workflow, not just internal dropdown plumbing.
+        if "Group" in headers:
+            col_group = get_column_letter(headers.index("Group") + 1)
+            ws_groups = wb.create_sheet("Groups")
+            ws_groups["A1"] = "Group Name"
+            ws_groups["A1"].font = Font(bold=True)
+            for i, g in enumerate(self.get_all_groups(), start=2):
+                ws_groups.cell(row=i, column=1, value=g)
+            ws_groups.column_dimensions["A"].width = 30
+
+            GROUPS_MAX_ROWS = 200  # headroom for groups added directly on this sheet
+            dv_group = DataValidation(
+                type="list", formula1=f"Groups!$A$2:$A${GROUPS_MAX_ROWS + 1}",
+                allow_blank=True, showErrorMessage=True, errorStyle="stop",
+            )
+            dv_group.errorTitle = "Unknown Group"
+            dv_group.error = 'Add this group to the "Groups" sheet first, then pick it here.'
+            ws.add_data_validation(dv_group)
+            dv_group.add(f"{col_group}2:{col_group}{table_last_row}")
 
         # ── "Instructions" sheet — same brand banner + Column/What to enter ─
         # table layout as the tax challan template (ui/dialogs.py), so both
@@ -721,9 +752,10 @@ class VaultManager:
         sections = [
             ("Name", "The client's name, just for you to recognise them by."),
             ("Group",
-             'Optional — e.g. a family or firm name ("Bholusaria Family"). Leave '
-             "blank if this client isn't part of a group. Importing the same group "
-             "name for several clients groups them together in the app."),
+             'Optional — e.g. a family or firm name ("Bholusaria Family"). Pick one '
+             'from the dropdown, or leave blank if this client isn\'t part of a '
+             'group. To add a new group, type its name on the "Groups" sheet first '
+             '— it then shows up in this dropdown.'),
             ("PAN",
              "The client's 10-character PAN, e.g. AAAPT0001A. If a PAN already exists "
              "in AayDocCapio, importing it again updates that client instead of adding "
@@ -776,6 +808,20 @@ class VaultManager:
         security_note_cell.border = box_border
         security_note_cell.alignment = Alignment(wrap_text=True, vertical="center", indent=1)
         ws_help.row_dimensions[r].height = 32
+        r += 1
+
+        if "Group" in headers:
+            ws_help.merge_cells(f"A{r}:B{r}")
+            groups_note_cell = ws_help.cell(
+                row=r, column=1,
+                value='Note: to add a new group, type its name on the "Groups" sheet '
+                      "first — it then appears in the Group column's dropdown here.",
+            )
+            groups_note_cell.font = Font(bold=True, color="7F6000")
+            groups_note_cell.fill = NOTE_FILL
+            groups_note_cell.border = box_border
+            groups_note_cell.alignment = Alignment(wrap_text=True, vertical="center", indent=1)
+            ws_help.row_dimensions[r].height = 32
 
         wb.active = wb["Instructions"]
         wb.save(path)
