@@ -4,7 +4,7 @@ Run:  python3 app.py
 """
 from version import __version__ as APP_VERSION
 
-import sys, os, json, asyncio, threading, datetime, logging
+import sys, os, json, asyncio, threading, datetime, logging, time
 from urllib.parse import urlencode
 
 # Force XCB (X11) backend on Linux/WSL2 — must be set before Qt initialises.
@@ -3958,6 +3958,7 @@ if __name__ == "__main__":
         # Playwright and build the full main window, which can take a
         # visible moment with nothing else on screen otherwise.
         splash = None
+        _splash_shown_at = None
         try:
             _splash_logo_path = os.path.join(_bundled_dir(), "resources", "AayDoc_FullLogo.png")
             if os.path.exists(_splash_logo_path):
@@ -3966,6 +3967,7 @@ if __name__ == "__main__":
                 splash = _SplashScreen(_splash_pix)
                 splash.fade_in()
                 app.processEvents()
+                _splash_shown_at = time.monotonic()
         except Exception as _splash_err:
             _diag(f"Splash screen skipped: {_splash_err}")
             splash = None
@@ -3997,6 +3999,20 @@ if __name__ == "__main__":
             _icon = QIcon(_app_icon_path)
             app.setWindowIcon(_icon)
             window.setWindowIcon(_icon)
+        # Confirmed live: on a fast startup, AayDocCapioApp() construction
+        # can finish well inside the splash's own 350ms fade-in, so
+        # finish()'s fade-out started almost immediately after — the splash
+        # (and its glow/dot animations) barely registered before vanishing.
+        # Hold it on screen for at least this long regardless of how fast
+        # startup actually was. Uses a processEvents() pump rather than
+        # time.sleep() so the fade-in/glow/dot animations keep rendering
+        # during the wait instead of freezing mid-motion.
+        _MIN_SPLASH_SECONDS = 1.3
+        if splash is not None and _splash_shown_at is not None:
+            _deadline = _splash_shown_at + _MIN_SPLASH_SECONDS
+            while time.monotonic() < _deadline:
+                app.processEvents()
+                time.sleep(0.01)
         _diag("Step 7: window.show()")
         window.show()
         if splash is not None:
