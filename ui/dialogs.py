@@ -223,11 +223,7 @@ class ManageGroupsDialog(QDialog):
         t = _t()
         self.setStyleSheet(
             f"QDialog{{background:{t.bg_window};}}"
-            f"QLabel{{color:{t.text_primary};background:transparent;}}"
-            f"QCheckBox{{color:{t.text_primary};background:transparent;spacing:8px;}}"
-            f"QCheckBox::indicator{{width:15px;height:15px;border:1.5px solid {t.border};"
-            f"border-radius:3px;background:{t.bg_checkbox};}}"
-            f"QCheckBox::indicator:checked{{background:{t.accent};border-color:{t.accent};}}")
+            f"QLabel{{color:{t.text_primary};background:transparent;}}")
         main = QVBoxLayout(self)
         main.setContentsMargins(20, 16, 20, 16)
         main.setSpacing(8)
@@ -280,7 +276,7 @@ class ManageGroupsDialog(QDialog):
         main.addWidget(self._clients_header)
 
         self._client_search = QLineEdit()
-        self._client_search.setPlaceholderText("🔍  Search by name or PAN...")
+        self._client_search.setPlaceholderText("🔍  Search to add a client to this group...")
         self._client_search.setClearButtonEnabled(True)
         self._client_search.setFixedHeight(28)
         self._client_search.textChanged.connect(self._refresh_clients)
@@ -434,6 +430,13 @@ class ManageGroupsDialog(QDialog):
                 w.deleteLater()
 
     def _refresh_clients(self, *_args):
+        """Confirmed live, corrected: clicking a group must show ONLY that
+        group's actual members by default — the earlier "every client,
+        checked or not" list read as broken (a brand-new empty group
+        looked identical to one with members, and it was hard to tell at
+        a glance who was actually in a group). Search now has a distinct
+        job: finding a client to ADD (from everyone, member or not) rather
+        than filtering the always-everyone list."""
         self._clear_client_rows()
         t = _t()
         if not self._selected_group:
@@ -446,39 +449,59 @@ class ManageGroupsDialog(QDialog):
 
         self._clients_header.setText(f'Clients in "{self._selected_group}"')
         search = self._client_search.text().strip().lower()
-        clients = self._vault.get_all_assessees()
-        if search:
-            clients = [c for c in clients
-                       if search in c.get("name", "").lower() or search in c.get("pan", "").lower()]
-        clients.sort(key=lambda c: c.get("name", "").lower())
+        all_clients = self._vault.get_all_assessees()
 
-        if not clients:
-            empty_lbl = _lbl("No clients match your search.", 11, color=t.text_muted)
-            self._clients_layout.insertWidget(0, empty_lbl)
+        if search:
+            # Search mode: candidates from EVERYONE matching the search,
+            # each row showing Remove (already a member) or Add (isn't).
+            clients = [c for c in all_clients
+                       if search in c.get("name", "").lower() or search in c.get("pan", "").lower()]
+            clients.sort(key=lambda c: c.get("name", "").lower())
+            if not clients:
+                empty_lbl = _lbl("No clients match your search.", 11, color=t.text_muted)
+                self._clients_layout.insertWidget(0, empty_lbl)
+                return
+            for c in clients:
+                self._add_client_row(c, in_group=(c.get("group", "").strip() == self._selected_group))
             return
 
-        for c in clients:
-            self._add_client_row(c)
+        # Default: members of this group only.
+        members = [c for c in all_clients if c.get("group", "").strip() == self._selected_group]
+        members.sort(key=lambda c: c.get("name", "").lower())
+        if not members:
+            empty_lbl = _lbl(
+                "No clients in this group yet — search above to add some.",
+                11, color=t.text_muted)
+            empty_lbl.setWordWrap(True)
+            self._clients_layout.insertWidget(0, empty_lbl)
+            return
+        for c in members:
+            self._add_client_row(c, in_group=True)
 
-    def _add_client_row(self, client: dict):
+    def _add_client_row(self, client: dict, in_group: bool):
         t = _t()
         row = QWidget()
         row.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         row.setStyleSheet(f"QWidget{{background:{t.bg_input};}}")
         hl = QHBoxLayout(row)
         hl.setContentsMargins(4, 2, 4, 2)
+        hl.setSpacing(8)
 
-        chk = QCheckBox(f"{client.get('name', '')}   ({client.get('pan', '')})")
-        chk.setChecked(client.get("group", "").strip() == self._selected_group)
-        chk.toggled.connect(lambda checked, cid=client.get("id"): self._toggle_client(cid, checked))
-        hl.addWidget(chk, 1)
+        lbl = QLabel(f"{client.get('name', '')}   ({client.get('pan', '')})")
+        hl.addWidget(lbl, 1)
+        if in_group:
+            action_btn = _btn("✕ Remove", "danger", height=26)
+        else:
+            action_btn = _btn("+ Add", "outline", height=26)
+        action_btn.clicked.connect(
+            lambda _, cid=client.get("id"), add=not in_group: self._set_membership(cid, add))
+        hl.addWidget(action_btn)
         self._clients_layout.insertWidget(self._clients_layout.count() - 1, row)
 
-    def _toggle_client(self, client_id: str, checked: bool):
-        self._vault.set_client_group(client_id, self._selected_group if checked else "")
-        # Only the groups deck's counts need refreshing here — rebuilding
-        # the clients deck too would tear down the checkbox mid-click.
+    def _set_membership(self, client_id: str, add: bool):
+        self._vault.set_client_group(client_id, self._selected_group if add else "")
         self._refresh_groups()
+        self._refresh_clients()
 
 
 # ── Batch Progress Dialog ─────────────────────────────────────────────────────
