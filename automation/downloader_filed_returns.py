@@ -794,25 +794,37 @@ async def download_filed_returns(
     dob: str = "",
     filing_scope: str = "all",
     on_year_start=None,
-) -> dict[str, tuple[bool, str, list[dict]]]:
+) -> dict[str, tuple[bool, str, list[dict], dict]]:
     """F-14 (multi-year) entry point. Navigates to "View Filed Returns" ONCE,
     then for each Assessment Year in `assessment_years`: re-applies the AY
     filter (unchecking whichever year was applied last) and processes that
     year's filings into `download_dir_for_year(assessment_year)`. Returns
-    {assessment_year: (ok, msg, saved_files)} — same per-year result shape
-    the single-year version used to return directly.
+    {assessment_year: (ok, msg, saved_files, status_info)} — same per-year
+    result shape the single-year version used to return, plus a 4th
+    element (F-67 "kill two birds"): `status_info` is whatever
+    automation.return_status.scan_latest_status() found for that year,
+    reusing the SAME already-navigated-and-AY-filtered page this function
+    just used to download documents, rather than a separate full
+    navigate+filter+scan later — see that function's own docstring for why
+    this is worth doing here instead of only from the dedicated ITR
+    Processing Status window. `status_info` is `{"ok": False, ...}` (never
+    None) if nothing could be read, so callers can check `.get("ok")`
+    uniformly without a None-guard.
 
     `on_year_start(assessment_year)`, if given, fires right before that
     year's download begins — lets the caller update a per-year "now
     downloading" status instead of only finding out once it's done."""
+    from automation.return_status import scan_latest_status
+
     step = make_step_logger(log_callback, "FILEDRET")
-    results: dict[str, tuple[bool, str, list[dict]]] = {}
+    results: dict[str, tuple[bool, str, list[dict], dict]] = {}
+    empty_status = {"ok": False, "reason": "", "status": "", "status_date": "", "filing_date": "", "ack_no": ""}
     try:
         filed_returns_page = await navigate_to_view_filed_returns(page, log_callback)
     except Exception as e:
         step(f"[Error] Could not reach View Filed Returns: {e}")
         for ay in assessment_years:
-            results[ay] = (False, f"Navigation failed: {e}", [])
+            results[ay] = (False, f"Navigation failed: {e}", [], dict(empty_status))
         return results
 
     previous_year: str | None = None
@@ -820,9 +832,15 @@ async def download_filed_returns(
         if on_year_start:
             on_year_start(assessment_year)
         download_dir = download_dir_for_year(assessment_year)
-        results[assessment_year] = await _download_filed_returns_for_year(
+        dl_ok, dl_msg, dl_saved = await _download_filed_returns_for_year(
             filed_returns_page, assessment_year, download_dir, log_callback,
             pan=pan, dob=dob, filing_scope=filing_scope, previous_year=previous_year,
         )
+        try:
+            status_info = await scan_latest_status(filed_returns_page, assessment_year, step)
+        except Exception as e:
+            step(f"[Warning] Could not read processing status for AY {assessment_year} (continuing): {e}")
+            status_info = dict(empty_status)
+        results[assessment_year] = (dl_ok, dl_msg, dl_saved, status_info)
         previous_year = assessment_year
     return results

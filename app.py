@@ -3790,6 +3790,22 @@ class AayDocCapioApp(QMainWindow):
                         if doc_type == "26as":
                             for _txt_path in (result.get("txt_paths") or {}).values():
                                 self._batch_26as_txts.append((pan, _txt_path))
+                        elif doc_type == "filed_returns":
+                            # F-67 "kill two birds": persist whatever ITR
+                            # processing status handle_filed_returns()
+                            # already read while downloading, so a
+                            # Downloads run also keeps the ITR Processing
+                            # Status window's data fresh without a
+                            # separate Check Processing Status pass.
+                            for _ay_value, _status_info in (result.get("return_statuses") or {}).items():
+                                try:
+                                    self.vault.record_return_status(
+                                        pan, _ay_value, _status_info.get("status", ""),
+                                        status_date=_status_info.get("status_date", ""),
+                                        filing_date=_status_info.get("filing_date", ""),
+                                        ack_no=_status_info.get("ack_no", ""))
+                                except Exception as _rs_err:
+                                    self.log(f"[Warning] Could not save processing status for AY {_ay_value}: {_rs_err}")
                         elif doc_type == "request_ais":
                             for _ay_lbl, _ais_status in (result.get("ais_statuses") or {}).items():
                                 _key = (pan, _ay_lbl)
@@ -3900,6 +3916,16 @@ class AayDocCapioApp(QMainWindow):
                             if doc_type == "26as":
                                 for _txt_path in (result.get("txt_paths") or {}).values():
                                     self._batch_26as_txts.append((pan, _txt_path))
+                            elif doc_type == "filed_returns":
+                                for _ay_value, _status_info in (result.get("return_statuses") or {}).items():
+                                    try:
+                                        self.vault.record_return_status(
+                                            pan, _ay_value, _status_info.get("status", ""),
+                                            status_date=_status_info.get("status_date", ""),
+                                            filing_date=_status_info.get("filing_date", ""),
+                                            ack_no=_status_info.get("ack_no", ""))
+                                    except Exception as _rs_err:
+                                        self.log(f"[Warning] Could not save processing status for AY {_ay_value}: {_rs_err}")
                             elif doc_type == "request_ais":
                                 for _ay_lbl, _ais_status in (result.get("ais_statuses") or {}).items():
                                     self._ais_results[(pan, _ay_lbl)] = (

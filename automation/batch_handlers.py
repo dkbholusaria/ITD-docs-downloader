@@ -240,9 +240,17 @@ async def handle_filed_returns(page, pan, dob, year_specs, out_for_year, log_cal
     )
 
     all_saved = []
-    for value, (fr_ok, fr_msg, fr_saved) in results.items():
+    # F-67 "kill two birds": download_filed_returns() now also reads each
+    # year's current processing status while it's already there for the
+    # document download — collected here (keyed by the real AY value, same
+    # key vault.record_return_status() already uses) for the caller to
+    # persist, instead of needing a separate Check Processing Status run.
+    return_statuses = {}
+    for value, (fr_ok, fr_msg, fr_saved, fr_status) in results.items():
         ay_label = ay_label_by_value.get(value, value)
         all_saved.extend(fr_saved)
+        if fr_status.get("ok"):
+            return_statuses[value] = fr_status
         if fr_ok:
             if fr_msg:
                 set_status(pan, ay_label, f"⚠ Partially Completed — {fr_msg}")
@@ -250,7 +258,7 @@ async def handle_filed_returns(page, pan, dob, year_specs, out_for_year, log_cal
                 set_status(pan, ay_label, f"✅ Filed Returns Downloaded ({len(fr_saved)} file(s))")
         else:
             set_status(pan, ay_label, f"❌ Filed Returns Failed — {fr_msg}")
-    return {"saved": all_saved}
+    return {"saved": all_saved, "return_statuses": return_statuses}
 
 
 async def handle_challans(page, pan, dob, year_specs, out_for_year, log_callback, set_status,

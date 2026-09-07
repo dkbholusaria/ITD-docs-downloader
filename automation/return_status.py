@@ -87,6 +87,100 @@ async def _read_latest_status(card, step) -> tuple[str, str]:
         return "", ""
 
 
+async def scan_latest_status(filed_returns_page, assessment_year: str, step) -> dict:
+    """The card-scan + 'most recent filing wins' resolution + status/date
+    read, factored out of check_return_status() so it can be reused by
+    ANY caller that has already navigated to View Filed Returns and
+    applied the AY filter for this year — not just check_return_status()
+    itself. In particular, automation/downloader_filed_returns.py's
+    download flow calls this too (F-67 "kill two birds" follow-up): it
+    has already navigated + AY-filtered the page as part of downloading
+    that year's documents, so reusing that same page here avoids a
+    second, separate navigate+filter (the expensive/fragile part) just
+    to also record processing status — only the comparatively cheap
+    per-card scan below is repeated.
+
+    Returns {"ok", "reason", "status", "status_date", "filing_date", "ack_no"}
+    — see check_return_status()'s docstring for what each field means."""
+    empty = {"ok": False, "reason": "", "status": "", "status_date": "", "filing_date": "", "ack_no": ""}
+    next_page_btn = filed_returns_page.locator("img[alt='next page']").first
+    prev_page_btn = filed_returns_page.locator("img[alt='previous page']").first
+
+    # Reset to the first page before scanning. This function's own paging
+    # below always starts counting from page 0 — fine when called right
+    # after apply_ay_filter() (which lands on page 0 already), but NOT
+    # safe when called after a download pass that may have paged forward
+    # to find/download a specific filing and left the pager there. Without
+    # this, the scan below could start mid-way through the results and
+    # miss earlier cards, or double-count pages already stepped through.
+    for _reset_attempt in range(10):
+        try:
+            if await _pager_arrow_enabled(prev_page_btn, step, "previous"):
+                await prev_page_btn.click()
+                await asyncio.sleep(1)
+            else:
+                break
+        except Exception as e:
+            step(f"Pager reset-to-first-page failed (continuing): {e}")
+            break
+
+    candidates: list[dict] = []
+    current_page = 0
+    for _page_num in range(10):  # same hard cap as downloader_filed_returns.py
+        step(f"Scanning page {current_page} for AY {assessment_year} cards")
+        all_cards = filed_returns_page.locator("mat-card.contextBox")
+        card_count = await all_cards.count()
+        for i in range(card_count):
+            card = all_cards.nth(i)
+            try:
+                ay_text = await card.locator(".contentHeadingText").first.inner_text()
+            except Exception as e:
+                step(f"Card {i}: could not read AY heading ({e})")
+                ay_text = ""
+            if assessment_year not in ay_text:
+                continue
+            if await _is_discarded(card, step):
+                step(f"Card {i}: discarded — excluded from 'latest' comparison")
+                continue
+            date_text, date_parsed = await _read_filing_date(card, step)
+            candidates.append({
+                "page": current_page, "index": i,
+                "date_text": date_text, "date_parsed": date_parsed,
+            })
+
+        try:
+            if await _pager_arrow_enabled(next_page_btn, step, "next"):
+                await next_page_btn.click()
+                await asyncio.sleep(1)
+                current_page += 1
+            else:
+                break
+        except Exception as e:
+            step(f"Next-page click failed ({e}) — stopping scan")
+            break
+
+    if not candidates:
+        step(f"No non-discarded filing found for AY {assessment_year}")
+        return {**empty, "reason": f"No filing found for AY {assessment_year}"}
+
+    dated = [c for c in candidates if c["date_parsed"] is not None]
+    winner = max(dated, key=lambda c: c["date_parsed"]) if dated else candidates[0]
+    step(f"Latest filing: page={winner['page']}, index={winner['index']}, date={winner['date_text']}")
+
+    await _goto_page(winner["page"], current_page, next_page_btn, prev_page_btn, step)
+    card = filed_returns_page.locator("mat-card.contextBox").nth(winner["index"])
+    ack_no = await _read_ack_no(card, step)
+    status_text, status_date = await _read_latest_status(card, step)
+
+    if not status_text:
+        return {**empty, "reason": "Found the filing but could not read its status"}
+
+    return {
+        "ok": True, "reason": "", "status": status_text, "status_date": status_date,
+        "filing_date": winner["date_text"], "ack_no": ack_no,
+    }
+
+
 async def check_return_status(page: Page, assessment_year: str, log_callback,
                                pan: str = "", dob: str = "") -> dict:
     """One already-logged-in client, one Assessment Year. Returns:
@@ -117,64 +211,7 @@ async def check_return_status(page: Page, assessment_year: str, log_callback,
             step("AY filter did not apply — reporting failure rather than guessing")
             return {**empty, "reason": f"Could not filter to Assessment Year {assessment_year} on the portal"}
 
-        next_page_btn = filed_returns_page.locator("img[alt='next page']").first
-        prev_page_btn = filed_returns_page.locator("img[alt='previous page']").first
-
-        candidates: list[dict] = []
-        current_page = 0
-        for _page_num in range(10):  # same hard cap as downloader_filed_returns.py
-            step(f"Scanning page {current_page} for AY {assessment_year} cards")
-            all_cards = filed_returns_page.locator("mat-card.contextBox")
-            card_count = await all_cards.count()
-            for i in range(card_count):
-                card = all_cards.nth(i)
-                try:
-                    ay_text = await card.locator(".contentHeadingText").first.inner_text()
-                except Exception as e:
-                    step(f"Card {i}: could not read AY heading ({e})")
-                    ay_text = ""
-                if assessment_year not in ay_text:
-                    continue
-                if await _is_discarded(card, step):
-                    step(f"Card {i}: discarded — excluded from 'latest' comparison")
-                    continue
-                date_text, date_parsed = await _read_filing_date(card, step)
-                candidates.append({
-                    "page": current_page, "index": i,
-                    "date_text": date_text, "date_parsed": date_parsed,
-                })
-
-            try:
-                if await _pager_arrow_enabled(next_page_btn, step, "next"):
-                    await next_page_btn.click()
-                    await asyncio.sleep(1)
-                    current_page += 1
-                else:
-                    break
-            except Exception as e:
-                step(f"Next-page click failed ({e}) — stopping scan")
-                break
-
-        if not candidates:
-            step(f"No non-discarded filing found for AY {assessment_year}")
-            return {**empty, "reason": f"No filing found for AY {assessment_year}"}
-
-        dated = [c for c in candidates if c["date_parsed"] is not None]
-        winner = max(dated, key=lambda c: c["date_parsed"]) if dated else candidates[0]
-        step(f"Latest filing: page={winner['page']}, index={winner['index']}, date={winner['date_text']}")
-
-        await _goto_page(winner["page"], current_page, next_page_btn, prev_page_btn, step)
-        card = filed_returns_page.locator("mat-card.contextBox").nth(winner["index"])
-        ack_no = await _read_ack_no(card, step)
-        status_text, status_date = await _read_latest_status(card, step)
-
-        if not status_text:
-            return {**empty, "reason": "Found the filing but could not read its status"}
-
-        return {
-            "ok": True, "reason": "", "status": status_text, "status_date": status_date,
-            "filing_date": winner["date_text"], "ack_no": ack_no,
-        }
+        return await scan_latest_status(filed_returns_page, assessment_year, step)
     except Exception as e:
         err = str(e)
         step(f"[Error] Return status check failed: {err}")
