@@ -1283,12 +1283,14 @@
   <div class="section-wrap">
     <div class="section-eyebrow"><div class="eyebrow-dot-sm"></div> Features</div>
     <h2>Everything AayDocCapio Does</h2>
-    <p class="section-sub">From bulk downloads to Excel reports to client email delivery — one tool for the complete workflow.</p>
+    <p class="section-sub">From bulk downloads and tax challans to status tracking, client groups, Excel reports, and email delivery — one tool for the complete workflow.</p>
 
     <div class="tab-layout">
       <div class="tab-nav">
         <button class="tab-btn active" onclick="switchTab(event,'downloads')">Downloads</button>
         <button class="tab-btn" onclick="switchTab(event,'challans')">Tax Challans</button>
+        <button class="tab-btn" onclick="switchTab(event,'returnstatus')">Return Status</button>
+        <button class="tab-btn" onclick="switchTab(event,'groups')">Client Groups</button>
         <button class="tab-btn" onclick="switchTab(event,'excel')">Excel Reports</button>
         <button class="tab-btn" onclick="switchTab(event,'email')">Email Delivery</button>
         <button class="tab-btn" onclick="switchTab(event,'manage')">Manage &amp; Settings</button>
@@ -1321,6 +1323,28 @@
         </div>
       </div>
 
+      <div id="tab-returnstatus" class="tab-panel">
+        <h3>ITR Processing Status Tracker</h3>
+        <p class="tab-desc">Log in and see exactly where each client's return stands, straight from the ITD portal's own status timeline — no more opening every account one by one.</p>
+        <div class="tab-bullets">
+          <div class="tab-bullet"><div class="tab-check">✓</div><span><strong>Real portal statuses</strong> — Pending e-Verification, Successfully e-Verified, Under Processing, Processed with Refund/Demand Due, and more, shown exactly as the portal shows them, plus the portal's own status date</span></div>
+          <div class="tab-bullet"><div class="tab-check">✓</div><span><strong>Return Status window</strong> — filter by client name/PAN and Assessment Year, select clients, and re-check them live from the portal</span></div>
+          <div class="tab-bullet"><div class="tab-check">✓</div><span><strong>Kept fresh automatically</strong> — an ordinary Filed Returns download already opens the exact page needed, so status is recorded as a side effect with no extra run required</span></div>
+          <div class="tab-bullet"><div class="tab-check">✓</div><span><strong>Most-recent filing wins</strong> — when a client has more than one filing for a year (Original, Revised, ...), status always reflects the latest one</span></div>
+        </div>
+      </div>
+
+      <div id="tab-groups" class="tab-panel">
+        <h3>Client Groups</h3>
+        <p class="tab-desc">Organize related clients together — a family, a firm, however you actually work — instead of managing everyone as one flat list.</p>
+        <div class="tab-bullets">
+          <div class="tab-bullet"><div class="tab-check">✓</div><span><strong>Two-panel Manage Groups window</strong> — pick a group to see and edit exactly who's in it, add or remove members with a click</span></div>
+          <div class="tab-bullet"><div class="tab-check">✓</div><span><strong>Filter by Group</strong> — in the main client grid and the Return Status window, alongside a visible Group column</span></div>
+          <div class="tab-bullet"><div class="tab-check">✓</div><span><strong>Bulk-assign from the grid</strong> — select several clients at once and assign them all to a group in one step</span></div>
+          <div class="tab-bullet"><div class="tab-check">✓</div><span><strong>Import template support</strong> — the Client Master template has a dedicated Groups sheet with a dropdown-validated Group column, so bulk-importing clients into groups works the same way as everything else</span></div>
+        </div>
+      </div>
+
       <div id="tab-excel" class="tab-panel">
         <h3>Excel Reports &amp; Conversions</h3>
         <p class="tab-desc">Structured, analysis-ready Excel workbooks generated automatically from downloaded data.</p>
@@ -1350,8 +1374,6 @@
         <p class="tab-desc">Keep your client list, years, and preferences organised across every session.</p>
         <div class="tab-bullets">
           <div class="tab-bullet"><div class="tab-check">✓</div><span><strong>Status &amp; history</strong> — filter by download status, see last result and saved path per client per AY/FY</span></div>
-          <div class="tab-bullet"><div class="tab-check">✓</div><span><strong>Client Groups</strong> — organize clients by family or firm; a two-panel Manage Groups window to add/remove members, filter by Group in the client grid and Return Status window</span></div>
-          <div class="tab-bullet"><div class="tab-check">✓</div><span><strong>ITR Processing Status</strong> — check where each client's return actually stands, straight from the portal's own status timeline, filterable by client and Year</span></div>
           <div class="tab-bullet"><div class="tab-check">✓</div><span><strong>AY / TY / FY management</strong> — add, remove, reorder, toggle years; output folders labelled consistently</span></div>
           <div class="tab-bullet"><div class="tab-check">✓</div><span><strong>Light &amp; Dark Navy themes</strong> — preference saved across sessions</span></div>
           <div class="tab-bullet"><div class="tab-check">✓</div><span><strong>Headless / visible mode</strong> — browser runs hidden by default; switch to visible for CAPTCHA handling</span></div>
