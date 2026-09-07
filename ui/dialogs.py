@@ -191,6 +191,137 @@ class ManageYearsDialog(QDialog):
             QMessageBox.critical(self, "Save Error", str(ex))
 
 
+# ── Manage Groups Dialog (F-11) ────────────────────────────────────────────────
+
+class ManageGroupsDialog(QDialog):
+    """Client Master > Manage Groups… — rename or delete a group. Unlike
+    ManageYearsDialog, changes apply immediately to the vault (via
+    vault.rename_group/clear_group) rather than being staged and written
+    on a single Save & Close, since a group is just a shared value of each
+    client's own "group" field, not a separate managed list needing its
+    own save step."""
+
+    def __init__(self, parent, vault):
+        super().__init__(parent)
+        self._vault = vault
+        self.setWindowTitle("Manage Groups")
+        self.setFixedSize(460, 480)
+        self.setModal(True)
+        self._build_ui()
+        self._refresh_list()
+
+    def _build_ui(self):
+        t = _t()
+        self.setStyleSheet(f"QDialog{{background:{t.bg_window};}}"
+                            f"QLabel{{color:{t.text_primary};background:transparent;}}")
+        main = QVBoxLayout(self)
+        main.setContentsMargins(20, 16, 20, 16)
+        main.setSpacing(8)
+
+        main.addWidget(_lbl("Manage Groups", 13, bold=True))
+        main.addWidget(_lbl(
+            "Rename or delete a group. Deleting only un-groups its clients "
+            "— it never deletes the clients themselves.", 10, color=t.text_muted))
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet(
+            f"QScrollArea{{background:{t.bg_input};border:1px solid {t.border};border-radius:6px;}}"
+            f"QScrollArea > QWidget > QWidget{{background:{t.bg_input};}}")
+        inner = QWidget()
+        inner.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        inner.setStyleSheet(f"QWidget{{background:{t.bg_input};}}")
+        self._list_layout = QVBoxLayout(inner)
+        self._list_layout.setSpacing(4)
+        self._list_layout.addStretch()
+        scroll.setWidget(inner)
+        main.addWidget(scroll, 1)
+
+        btns_row = QHBoxLayout()
+        btns_row.addStretch()
+        close_btn = _btn("Close", "primary", height=36)
+        close_btn.clicked.connect(self.accept)
+        btns_row.addWidget(close_btn)
+        main.addLayout(btns_row)
+
+    def _clear_rows(self):
+        while self._list_layout.count() > 1:
+            item = self._list_layout.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+
+    def _refresh_list(self):
+        self._clear_rows()
+        groups = self._vault.get_all_groups()
+        counts = {}
+        for a in self._vault.get_all_assessees():
+            g = a.get("group", "").strip()
+            if g:
+                counts[g] = counts.get(g, 0) + 1
+
+        if not groups:
+            t = _t()
+            empty_lbl = _lbl(
+                "No groups yet — assign one from Add/Edit Client or "
+                '"Assign to Group…" in the main window.', 11, color=t.text_muted)
+            empty_lbl.setWordWrap(True)
+            self._list_layout.insertWidget(0, empty_lbl)
+            return
+
+        for g in groups:
+            self._add_row(g, counts.get(g, 0))
+
+    def _add_row(self, group, count):
+        t = _t()
+        row = QWidget()
+        row.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        row.setStyleSheet(f"QWidget{{background:{t.bg_input};}}")
+        hl = QHBoxLayout(row)
+        hl.setContentsMargins(4, 2, 4, 2)
+        hl.setSpacing(8)
+        plural = "s" if count != 1 else ""
+        lbl = QLabel(f"{group}  ({count} client{plural})")
+        hl.addWidget(lbl, 1)
+        rename_btn = _btn("Rename", "outline", height=28)
+        rename_btn.clicked.connect(lambda _, g=group: self._rename(g))
+        hl.addWidget(rename_btn)
+        delete_btn = _btn("Delete", "danger", height=28)
+        delete_btn.clicked.connect(lambda _, g=group: self._delete(g))
+        hl.addWidget(delete_btn)
+        self._list_layout.insertWidget(self._list_layout.count() - 1, row)
+
+    def _rename(self, old: str):
+        from PyQt6.QtWidgets import QInputDialog
+        new, ok = QInputDialog.getText(self, "Rename Group", f'New name for "{old}":', text=old)
+        if not ok:
+            return
+        new = new.strip()
+        if not new or new == old:
+            return
+        if new in self._vault.get_all_groups():
+            if QMessageBox.question(
+                    self, "Merge Groups",
+                    f'"{new}" already exists. Merge "{old}" into it?',
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+               ) != QMessageBox.StandardButton.Yes:
+                return
+        self._vault.rename_group(old, new)
+        self._refresh_list()
+
+    def _delete(self, group: str):
+        count = sum(1 for a in self._vault.get_all_assessees()
+                    if a.get("group", "").strip() == group)
+        if QMessageBox.question(
+                self, "Delete Group",
+                f'Delete group "{group}"? {count} client(s) will be un-grouped, not deleted.',
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+           ) != QMessageBox.StandardButton.Yes:
+            return
+        self._vault.clear_group(group)
+        self._refresh_list()
+
+
 # ── Batch Progress Dialog ─────────────────────────────────────────────────────
 
 class BatchProgressDialog(QDialog):
@@ -4991,6 +5122,16 @@ class ReturnStatusDialog(QDialog):
         self._ay_combo.currentIndexChanged.connect(self._refresh_table)
         filter_row.addWidget(self._ay_combo)
 
+        # F-11: Group filter, same "All X + each real value" shape as the
+        # Year combo above, ANDed with it and the search box below.
+        filter_row.addWidget(_lbl("Group:"))
+        self._group_combo = QComboBox()
+        self._group_combo.addItem("All Groups", "")
+        for g in self._vault.get_all_groups():
+            self._group_combo.addItem(g, g)
+        self._group_combo.currentIndexChanged.connect(self._refresh_table)
+        filter_row.addWidget(self._group_combo)
+
         self._btn_update = _btn("🔄  Update Selected", "primary")
         self._btn_update.clicked.connect(self._on_update_clicked)
         filter_row.addWidget(self._btn_update)
@@ -5106,6 +5247,11 @@ class ReturnStatusDialog(QDialog):
 
         if search:
             rows = [r for r in rows if search in r["name"].lower() or search in r["pan"].lower()]
+
+        group_value = self._group_combo.currentData()
+        if group_value:
+            rows = [r for r in rows
+                    if by_pan.get(r["pan"], {}).get("group", "").strip() == group_value]
 
         self._row_data = rows
         allow_select = bool(ay_value)

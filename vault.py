@@ -183,7 +183,8 @@ class VaultManager:
         return assessees
 
     def add_update_assessee(self, name: str, pan: str, dob: str, password: str,
-                            assessee_id: str = None, email: str = "", cc: str = "") -> str:
+                            assessee_id: str = None, email: str = "", cc: str = "",
+                            group: str = "") -> str:
         """Adds or updates a single assessee."""
         raw_data = self._get_raw()
         _validate_fields(name, pan, dob, password)
@@ -204,6 +205,7 @@ class VaultManager:
                         "password_enc": password_enc,
                         "email": email.strip(),
                         "cc": cc.strip(),
+                        "group": group.strip(),
                     }
                     found = True
                     break
@@ -220,6 +222,7 @@ class VaultManager:
                         "password_enc": password_enc,
                         "email": email.strip(),
                         "cc": cc.strip(),
+                        "group": group.strip(),
                     }
                     found = True
                     break
@@ -234,11 +237,58 @@ class VaultManager:
                 "password_enc": password_enc,
                 "email": email.strip(),
                 "cc": cc.strip(),
+                "group": group.strip(),
             })
             assessee_id = new_id
 
         self._save_raw(raw_data)
         return assessee_id
+
+    # --- Client Groups (F-11) ---
+    # A group is just a shared value of one client's own "group" field —
+    # same lightweight model download_history already uses for AY labels
+    # (a plain string, not a managed entity with its own storage), so no
+    # migration is needed for vault files written before this feature.
+
+    def get_all_groups(self) -> list:
+        """Distinct non-empty group names currently in use, sorted — powers
+        every group dropdown/combo so they never drift from what clients
+        are actually tagged with."""
+        raw_data = self._get_raw()
+        groups = {a.get("group", "").strip() for a in raw_data.get("assessees", [])}
+        groups.discard("")
+        return sorted(groups)
+
+    def set_client_group(self, assessee_id: str, group: str) -> bool:
+        """Dedicated single-field setter for bulk-assign — avoids routing
+        through add_update_assessee(), which needs every other field
+        re-supplied. Returns True if the client was found."""
+        raw_data = self._get_raw()
+        for a in raw_data.get("assessees", []):
+            if a.get("id") == assessee_id:
+                a["group"] = group.strip()
+                self._save_raw(raw_data)
+                return True
+        return False
+
+    def rename_group(self, old: str, new: str) -> int:
+        """Renames a group across every client currently in it. Returns
+        the number of clients updated."""
+        raw_data = self._get_raw()
+        new = new.strip()
+        count = 0
+        for a in raw_data.get("assessees", []):
+            if a.get("group", "").strip() == old:
+                a["group"] = new
+                count += 1
+        if count:
+            self._save_raw(raw_data)
+        return count
+
+    def clear_group(self, group: str) -> int:
+        """"Deletes" a group by un-grouping every client in it — never
+        deletes the clients themselves. Returns the number un-grouped."""
+        return self.rename_group(group, "")
 
     def update_assessee_email(self, pan: str, email: str, cc: str = "") -> bool:
         """Update only the email and cc fields for a client by PAN. Returns True if found."""

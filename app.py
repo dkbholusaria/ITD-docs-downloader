@@ -481,12 +481,15 @@ class AayDocCapioApp(QMainWindow):
         act_imp      = QAction(_micon("menu_import.png"),     "Import from CSV / Excel",  self); act_imp.triggered.connect(self.bulk_import)
         act_exp      = QAction(_micon("menu_export.png"),     "Export Client Data",       self); act_exp.triggered.connect(self.export_data)
         act_tpl      = QAction(_micon("menu_template.png"),   "Download Import Template", self); act_tpl.triggered.connect(self.generate_template)
+        act_groups   = QAction(_micon("btn_scan.png"),        "Manage Groups…",      self); act_groups.triggered.connect(self.open_manage_groups)
         self._act_edit_cl = act_edit_cl
         self._act_del_cl  = act_del_cl
         cm_menu.addAction(act_add)
         cm_menu.addSeparator()
         cm_menu.addAction(act_edit_cl)
         cm_menu.addAction(act_del_cl)
+        cm_menu.addSeparator()
+        cm_menu.addAction(act_groups)
         cm_menu.addSeparator()
         cm_menu.addAction(act_imp)
         cm_menu.addAction(act_exp)
@@ -1087,6 +1090,16 @@ class AayDocCapioApp(QMainWindow):
         self.status_filter.currentIndexChanged.connect(lambda _: self._apply_filter(self.search_box.text()))
         filter_row.addWidget(self.status_filter)
 
+        # F-11: Group filter — populated/refreshed by _refresh_group_filter()
+        # (called from refresh_grid()) so it never drifts from what clients
+        # are actually tagged with.
+        self.group_filter = StyledComboBox()
+        self.group_filter.addItem("All Groups")
+        self.group_filter.setFixedHeight(28)
+        self.group_filter.setFixedWidth(160)
+        self.group_filter.currentIndexChanged.connect(lambda _: self._apply_filter(self.search_box.text()))
+        filter_row.addWidget(self.group_filter)
+
         layout.addLayout(filter_row)
 
         layout.addWidget(self._mk_client_table(), 1)
@@ -1201,17 +1214,18 @@ class AayDocCapioApp(QMainWindow):
     # Column indices for client table
     _TC_CHK    = 0
     _TC_NAME   = 1
-    _TC_PAN    = 2
-    _TC_DOB    = 3
-    _TC_STATUS = 4
-    _TC_TS     = 5   # Last Download Time
-    _TC_PATH   = 6
-    _TC_ACTS   = 7
+    _TC_GROUP  = 2
+    _TC_PAN    = 3
+    _TC_DOB    = 4
+    _TC_STATUS = 5
+    _TC_TS     = 6   # Last Download Time
+    _TC_PATH   = 7
+    _TC_ACTS   = 8
 
     def _mk_client_table(self):
-        self.client_table = QTableWidget(0, 8)
+        self.client_table = QTableWidget(0, 9)
         self.client_table.setHorizontalHeaderLabels([
-            "", "Name  ⇅", "PAN  ⇅", "Date of Birth",
+            "", "Name  ⇅", "Group  ⇅", "PAN  ⇅", "Date of Birth",
             "Last Download Status", "Last Download Time", "Last Saved Location", ""
         ])
 
@@ -1242,6 +1256,7 @@ class AayDocCapioApp(QMainWindow):
 
         for col, align in [
             (self._TC_NAME,   Qt.AlignmentFlag.AlignCenter),
+            (self._TC_GROUP,  Qt.AlignmentFlag.AlignCenter),
             (self._TC_PAN,    Qt.AlignmentFlag.AlignCenter),
             (self._TC_DOB,    Qt.AlignmentFlag.AlignCenter),
             (self._TC_STATUS, Qt.AlignmentFlag.AlignCenter),
@@ -1254,6 +1269,7 @@ class AayDocCapioApp(QMainWindow):
                 item.setTextAlignment(align)
 
         self.client_table.setColumnWidth(self._TC_CHK,    45)
+        self.client_table.setColumnWidth(self._TC_GROUP, 140)
         self.client_table.setColumnWidth(self._TC_PAN,   130)
         self.client_table.setColumnWidth(self._TC_STATUS, 170)
         self.client_table.setColumnWidth(self._TC_TS,    155)
@@ -1263,6 +1279,7 @@ class AayDocCapioApp(QMainWindow):
         header = self.client_table.horizontalHeader()
         header.setSectionResizeMode(self._TC_CHK,    QHeaderView.ResizeMode.Interactive)
         header.setSectionResizeMode(self._TC_NAME,   QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(self._TC_GROUP,  QHeaderView.ResizeMode.Interactive)
         header.setSectionResizeMode(self._TC_PAN,    QHeaderView.ResizeMode.Interactive)
         header.setSectionResizeMode(self._TC_DOB,    QHeaderView.ResizeMode.Interactive)
         header.setSectionResizeMode(self._TC_STATUS, QHeaderView.ResizeMode.Interactive)
@@ -1375,7 +1392,7 @@ class AayDocCapioApp(QMainWindow):
         pass
 
     def _on_header_clicked(self, logical_index):
-        if logical_index not in (self._TC_NAME, self._TC_PAN):
+        if logical_index not in (self._TC_NAME, self._TC_GROUP, self._TC_PAN):
             return
             
         header = self.client_table.horizontalHeader()
@@ -1445,6 +1462,13 @@ class AayDocCapioApp(QMainWindow):
         hl.addStretch()
 
 
+
+        # ── Assign to Group button (F-11) ─────────────────────────────────────
+        self.btn_assign_group = _btn("Assign to Group…", "secondary", height=34)
+        self.btn_assign_group.setToolTip("Set the Group for every currently checked client")
+        self.btn_assign_group.clicked.connect(self._open_assign_group)
+        hl.addWidget(self.btn_assign_group)
+        hl.addSpacing(8)
 
         # ── Email Docs button ─────────────────────────────────────────────────
         self.btn_email_docs = _btn("Email Docs", "secondary", height=34, icon="btn_send.png")
@@ -1590,8 +1614,8 @@ class AayDocCapioApp(QMainWindow):
                 item.setForeground(QColor(fg))
                 # Set font
                 font = item.font()
-                # PAN (col 2) is bold by default, or bold if selected
-                font.setBold(col == 2 or selected)
+                # PAN is bold by default, or bold if selected
+                font.setBold(col == self._TC_PAN or selected)
                 item.setFont(font)
         
         cb_container = self.client_table.cellWidget(row_idx, self._TC_CHK)
@@ -1618,10 +1642,16 @@ class AayDocCapioApp(QMainWindow):
             5: ("—",),            # Not run yet
         }
         status_prefixes = _sf_map.get(sf_idx)
+        # F-11: "All Groups" is always index 0 — anything else is an exact
+        # group name to match against the Group column's cell text.
+        group_wanted = (self.group_filter.currentText()
+                        if hasattr(self, "group_filter") and self.group_filter.currentIndex() > 0
+                        else None)
         for row_idx in range(self.client_table.rowCount()):
             name_item   = self.client_table.item(row_idx, self._TC_NAME)
             pan_item    = self.client_table.item(row_idx, self._TC_PAN)
             status_item = self.client_table.item(row_idx, self._TC_STATUS)
+            group_item  = self.client_table.item(row_idx, self._TC_GROUP)
             if not name_item or not pan_item:
                 continue
             st_text = status_item.text().lower() if status_item else ""
@@ -1634,7 +1664,9 @@ class AayDocCapioApp(QMainWindow):
             else:
                 st = (status_item.text() if status_item else "—")
                 status_match = any(st.startswith(p) for p in status_prefixes)
-            hidden = not (text_match and status_match)
+            group_match = (group_wanted is None
+                           or (group_item is not None and group_item.text() == group_wanted))
+            hidden = not (text_match and status_match and group_match)
             self.client_table.setRowHidden(row_idx, hidden)
             if not hidden:
                 a_id = name_item.data(Qt.ItemDataRole.UserRole)
@@ -1650,11 +1682,29 @@ class AayDocCapioApp(QMainWindow):
                     self._apply_row_style(row_idx, is_selected, row_idx)
         self._update_count()
 
+    def _refresh_group_filter(self):
+        """Keeps the Group filter dropdown in sync with what clients are
+        actually tagged with — same reasoning as refresh_ay_combo() for
+        the Assessment Year list. Preserves the current selection when
+        that group still exists, otherwise falls back to "All Groups"."""
+        if not hasattr(self, "group_filter"):
+            return
+        current = self.group_filter.currentText()
+        groups = self.vault.get_all_groups()
+        self.group_filter.blockSignals(True)
+        self.group_filter.clear()
+        self.group_filter.addItem("All Groups")
+        self.group_filter.addItems(groups)
+        idx = self.group_filter.findText(current)
+        self.group_filter.setCurrentIndex(idx if idx >= 0 else 0)
+        self.group_filter.blockSignals(False)
+
     def refresh_grid(self):
         self._checkbox_map.clear()
         self._id_to_row.clear()
         self.assessee_list = self.vault.get_all_assessees()
-        
+        self._refresh_group_filter()
+
         if not hasattr(self, "client_table"):
             return
             
@@ -1727,7 +1777,13 @@ class AayDocCapioApp(QMainWindow):
             name_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             self.client_table.setItem(i, self._TC_NAME, name_item)
 
-            # Col 2: PAN (monospace)
+            # Col 2: Group (F-11) — blank, not a "—" placeholder, when
+            # ungrouped, consistent with how other optional fields render.
+            group_item = QTableWidgetItem(a.get("group", ""))
+            group_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.client_table.setItem(i, self._TC_GROUP, group_item)
+
+            # Col 3: PAN (monospace)
             pan_item = QTableWidgetItem(pan)
             pan_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             f = pan_item.font(); f.setFamily(_MONO_FONT); pan_item.setFont(f)
@@ -1804,7 +1860,7 @@ class AayDocCapioApp(QMainWindow):
             self._apply_row_style(i, is_selected, i)
 
         # Re-apply active sort if any
-        if self._current_sort_col in (self._TC_NAME, self._TC_PAN):
+        if self._current_sort_col in (self._TC_NAME, self._TC_GROUP, self._TC_PAN):
             self.client_table.setSortingEnabled(True)
             self.client_table.sortByColumn(self._current_sort_col, self._current_sort_order)
             self.client_table.setSortingEnabled(False)
@@ -1960,6 +2016,16 @@ class AayDocCapioApp(QMainWindow):
         fields["name"].setFixedHeight(34)
         fields["name"].setAttribute(Qt.WidgetAttribute.WA_MacShowFocusRect, False)
         vl.addWidget(fields["name"])
+        vl.addSpacing(10)
+
+        # ── Group (F-11, optional) ───────────────────────────────────────────
+        vl.addWidget(_field_label("Group (optional — e.g. a family or firm name)"))
+        fields["group"] = StyledComboBox()
+        fields["group"].setEditable(True)
+        fields["group"].setFixedHeight(34)
+        fields["group"].addItem("")  # blank = ungrouped, always selectable
+        fields["group"].addItems(self.vault.get_all_groups())
+        vl.addWidget(fields["group"])
         vl.addSpacing(10)
 
         # ── PAN ───────────────────────────────────────────────────────────────
@@ -2208,6 +2274,7 @@ class AayDocCapioApp(QMainWindow):
             fields["pwd"].setText(a.get("password", ""))
             fields["email"].setText(a.get("email", ""))
             fields["cc"].setText(a.get("cc", ""))
+            fields["group"].setCurrentText(a.get("group", ""))
 
         # Buttons
         btn_row = QHBoxLayout()
@@ -2227,7 +2294,8 @@ class AayDocCapioApp(QMainWindow):
                     fields["name"].text(), fields["pan"].text(),
                     fields["dob"].text(), fields["pwd"].text(), edit_id,
                     email=fields["email"].text(),
-                    cc=fields["cc"].text())
+                    cc=fields["cc"].text(),
+                    group=fields["group"].currentText())
                 action = "updated" if editing else "added"
                 self.log(f"[Vault] Client {action}: {fields['pan'].text()} — {fields['name'].text()}")
                 dlg.accept()
@@ -2242,6 +2310,60 @@ class AayDocCapioApp(QMainWindow):
 
     def save_assessee(self):
         self._open_add_client()
+
+    def _open_assign_group(self):
+        """F-11 — control bar 'Assign to Group…': sets the Group field for
+        every currently checked client (self.selected_ids), same
+        "select clients in the grid, then act on them" pattern already
+        used by Downloads/Email Docs."""
+        if not self.selected_ids:
+            QMessageBox.warning(self, "Selection Required",
+                "Please select at least one client.")
+            return
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Assign to Group")
+        dlg.setFixedWidth(360)
+        t = _t()
+        dlg.setStyleSheet(
+            f"QDialog{{background:{t.bg_window};}}"
+            f"QLabel{{background:transparent;border:none;color:{t.text_primary};font-size:12px;}}")
+        vl = QVBoxLayout(dlg)
+        vl.setContentsMargins(24, 20, 24, 20)
+        vl.setSpacing(8)
+
+        vl.addWidget(QLabel(f"Set the Group for {len(self.selected_ids)} selected client(s):"))
+        combo = StyledComboBox()
+        combo.setEditable(True)
+        combo.setFixedHeight(34)
+        combo.addItem("")  # blank = ungroup the selected clients
+        combo.addItems(self.vault.get_all_groups())
+        vl.addWidget(combo)
+        vl.addSpacing(12)
+
+        btn_row = QHBoxLayout()
+        btn_cancel = _btn("Cancel", "secondary", height=34)
+        btn_apply = _btn("Apply", "primary", height=34)
+        btn_row.addWidget(btn_cancel)
+        btn_row.addStretch()
+        btn_row.addWidget(btn_apply)
+        vl.addLayout(btn_row)
+
+        btn_cancel.clicked.connect(dlg.reject)
+
+        def _apply():
+            group = combo.currentText().strip()
+            for a_id in self.selected_ids:
+                self.vault.set_client_group(a_id, group)
+            if group:
+                self.log(f"[Vault] {len(self.selected_ids)} client(s) assigned to group: '{group}'")
+            else:
+                self.log(f"[Vault] {len(self.selected_ids)} client(s) ungrouped.")
+            dlg.accept()
+            self.refresh_grid()
+
+        btn_apply.clicked.connect(_apply)
+        dlg.exec()
 
     # ── Email menu handlers ───────────────────────────────────────────────────
 
@@ -2405,6 +2527,11 @@ class AayDocCapioApp(QMainWindow):
 
     def open_manage_years(self):
         ManageYearsDialog(self, self._ay_json_path(), on_save=self.refresh_ay_combo).exec()
+
+    def open_manage_groups(self):
+        from ui.dialogs import ManageGroupsDialog
+        ManageGroupsDialog(self, self.vault).exec()
+        self.refresh_grid()
 
     def refresh_ay_combo(self):
         self._ay_entries = self._load_ay_list()
