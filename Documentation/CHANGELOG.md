@@ -2,6 +2,32 @@
 
 All notable changes to AayDocCapio are documented here.
 
+## [2.4.1] — 2026-09-07
+
+### New Features
+
+#### ITR Processing Status Tracker (F-67)
+- **Log in and check where each client's return actually stands** — Pending e-Verification, Successfully e-Verified, Under Processing, Processed, Processed with Refund/Demand Due, etc. — shown exactly as the ITD portal's own status timeline shows it, plus the portal's own date for that status
+- **A new "Return Status" window** — filter by client name/PAN and by Assessment Year, select clients, and "Update Selected" to re-check them live from the portal; "All Years" is a browse-only view across everything ever checked
+- **Status is automatically kept fresh by ordinary Downloads runs too** — a Filed Returns download batch already opens the exact page needed for this, so it now records the current status as a side effect, no separate check required
+- **New "Return Status" menu** with "Check Processing Status…"
+
+#### Client Groups (F-11)
+- **Group clients together** — e.g. by family or firm ("Bholusaria Family", "Goyal Family") — one group per client
+- **Manage Groups window** — a two-panel view: pick a group to see and edit exactly who's in it (add/remove with a click), plus rename/delete a group and create new ones ahead of assigning anyone
+- **Filter by Group** in the main client grid and the Return Status window, alongside a new visible Group column in the grid
+- **Client Master import template** gained a dedicated Groups sheet with a dropdown-validated Group column, so bulk-importing clients into their groups works the same way as everything else in the template
+
+### Improvements
+- **A branded splash screen** now shows while the app starts up, with a pulsing glow and fade transitions
+- Manage Groups' group list supports Up/Down arrow-key navigation
+
+### Bug Fixes
+- Fixed the ITR status timeline being read newest-item-last instead of newest-item-first, which could report a client's return as still "Pending for e-Verification" when it had actually already been fully processed
+- Fixed the splash screen sometimes vanishing almost instantly on a fast startup
+
+---
+
 ## [2.3.7] — 2026-09-03
 
 ### Improvements

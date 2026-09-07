@@ -1,7 +1,7 @@
 [tool.briefcase]
 project_name = "AayDocCapio"
 bundle = "com.aaydoccapio"
-version = "2.3.7"
+version = "2.4.1"
 url = "https://download.aaydoccapio.com/"
 license = "AGPL-3.0-or-later"
 author = "Deepak Bholusaria"

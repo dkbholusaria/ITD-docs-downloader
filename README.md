@@ -1,17 +1,16 @@
 # AayDocCapio
 
-**v2.3.7** — A secure, standalone desktop utility for **bulk downloading Form 26AS, Form 168, AIS, TIS, and Filed Returns & Intimation Orders**, and **generating tax payment challans**, from the [Income Tax Department e-Filing portal](https://eportal.incometax.gov.in) for multiple clients — across multiple Assessment/Tax Years — in one click, and **emailing those documents directly to clients**.
+**v2.4.1** — A secure, standalone desktop utility for **bulk downloading Form 26AS, Form 168, AIS, TIS, and Filed Returns & Intimation Orders**, and **generating tax payment challans**, from the [Income Tax Department e-Filing portal](https://eportal.incometax.gov.in) for multiple clients — across multiple Assessment/Tax Years — in one click, and **emailing those documents directly to clients**.
 
 Built with **PyQt6** + **Playwright**. Runs on Windows, macOS, and Linux/WSL.
 
 ---
 
-## What's New in 2.3.7
+## What's New in 2.4.1
 
-- **Tax challan import template overhaul** — a branded, plain-English Instructions sheet; Bank / Sub-Mode and Drawn on Bank cells that grey out and block entries that don't apply to the row's Payment Mode; the Challans sheet formatted as a real Excel table, pre-sized for 50 rows.
-- **New "Download Import Template" entry** under the E-Pay Tax menu — get the blank template without opening the full Generate Tax Challans dialog first.
-- **Reliability fixes for bulk tax challan generation** — Corporate PAN tile recognition, RTGS/NEFT no longer hangs waiting for a bank selection it never needs, e-Pay Tax navigation no longer locks onto a stale page heading on repeat navigation.
-- **Stronger validation** — a Bank / Sub-Mode or Drawn on Bank value that doesn't match the row's Payment Mode is now flagged on import and blocked in the manual Add/Edit Row dialog, instead of silently accepted.
+- **ITR Processing Status Tracker** — log in and see where each client's return actually stands (Pending e-Verification, Processed, Processed with Refund/Demand Due, etc.), shown exactly as the portal shows it. A new "Return Status" window lets you filter by client and Year and re-check live; ordinary Downloads runs now keep this data fresh automatically too.
+- **Client Groups** — organize clients into groups (e.g. by family or firm), with a two-panel Manage Groups window to add/remove members, group filters in the main grid and Return Status window, and Group support in the Client Master import template.
+- **A branded splash screen** on startup.
 
 See the full [CHANGELOG](CHANGELOG.md) for details.
 
