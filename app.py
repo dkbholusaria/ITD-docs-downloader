@@ -1930,19 +1930,28 @@ class AayDocCapioApp(QMainWindow):
 
     def _make_group_combo(self, current: str = ""):
         """F-11 group picker, shared by the Add/Edit Client dialog and
-        "Assign to Group…" — an editable combo (typing a new name directly
-        still works) PLUS an explicit "Add New Group…" item, since simply
-        typing into an editable combo turned out not to be discoverable at
-        all (confirmed live: the user asked "how will I create group" with
-        an empty Group field in front of them)."""
+        "Assign to Group…". Deliberately NOT editable — confirmed live,
+        twice: first that an editable combo's "just type a new name" path
+        wasn't discoverable at all (the user asked "how will I create
+        group"), and second, after adding an explicit "Add New Group…"
+        item, that free typing should be blocked outright rather than left
+        as a second, inconsistent way to add a group (a typo becomes its
+        own group with no warning). The dropdown list is now the only way
+        to pick or add a value."""
         combo = StyledComboBox()
-        combo.setEditable(True)
+        combo.setEditable(False)
         combo.setFixedHeight(34)
         combo.addItem("")  # blank = ungrouped, always selectable
         combo.addItems(self.vault.get_all_groups())
         combo.addItem(self._ADD_NEW_GROUP)
         if current:
-            combo.setCurrentText(current)
+            # A client's existing group might not be in get_all_groups() at
+            # all yet (e.g. this is the very first client in it, so no
+            # OTHER client's row would surface it) — add it so the current
+            # value is always selectable, not silently dropped.
+            if combo.findText(current) < 0:
+                combo.insertItem(combo.count() - 1, current)
+            combo.setCurrentIndex(combo.findText(current))
 
         def _on_index_changed(idx):
             if combo.itemText(idx) != self._ADD_NEW_GROUP:
@@ -1953,7 +1962,7 @@ class AayDocCapioApp(QMainWindow):
             if name:
                 if combo.findText(name) < 0:
                     combo.insertItem(combo.count() - 1, name)  # before the sentinel
-                combo.setCurrentText(name)
+                combo.setCurrentIndex(combo.findText(name))
             else:
                 combo.setCurrentIndex(0)  # back to blank/ungrouped, not stuck on the sentinel
 
