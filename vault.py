@@ -251,13 +251,31 @@ class VaultManager:
     # migration is needed for vault files written before this feature.
 
     def get_all_groups(self) -> list:
-        """Distinct non-empty group names currently in use, sorted — powers
-        every group dropdown/combo so they never drift from what clients
-        are actually tagged with."""
+        """Distinct group names, sorted — the union of an explicit roster
+        (raw_data["known_groups"], so a group can be created ahead of
+        assigning any client to it — see add_group()) and whatever values
+        client records actually carry (defensive, covers a group assigned
+        before ever being added to the roster). Powers every group
+        dropdown/combo, so they never drift from what's actually usable."""
         raw_data = self._get_raw()
-        groups = {a.get("group", "").strip() for a in raw_data.get("assessees", [])}
+        roster = {g.strip() for g in raw_data.get("known_groups", [])}
+        from_clients = {a.get("group", "").strip() for a in raw_data.get("assessees", [])}
+        groups = roster | from_clients
         groups.discard("")
         return sorted(groups)
+
+    def add_group(self, name: str) -> bool:
+        """Adds a group to the roster with no client assigned to it yet —
+        lets a group be set up ahead of time rather than only ever being
+        creatable from within a client's own Group field. Returns False
+        if it already exists (as a roster entry or on some client)."""
+        name = name.strip()
+        if not name or name in self.get_all_groups():
+            return False
+        raw_data = self._get_raw()
+        raw_data.setdefault("known_groups", []).append(name)
+        self._save_raw(raw_data)
+        return True
 
     def set_client_group(self, assessee_id: str, group: str) -> bool:
         """Dedicated single-field setter for bulk-assign — avoids routing
@@ -272,22 +290,29 @@ class VaultManager:
         return False
 
     def rename_group(self, old: str, new: str) -> int:
-        """Renames a group across every client currently in it. Returns
-        the number of clients updated."""
+        """Renames a group — across every client currently in it AND in
+        the roster (so renaming a still-empty group doesn't just make it
+        vanish). Returns the number of clients updated."""
         raw_data = self._get_raw()
+        old = old.strip()
         new = new.strip()
         count = 0
         for a in raw_data.get("assessees", []):
             if a.get("group", "").strip() == old:
                 a["group"] = new
                 count += 1
-        if count:
-            self._save_raw(raw_data)
+        roster = raw_data.setdefault("known_groups", [])
+        if old in roster:
+            roster.remove(old)
+        if new and new not in roster:
+            roster.append(new)
+        self._save_raw(raw_data)
         return count
 
     def clear_group(self, group: str) -> int:
-        """"Deletes" a group by un-grouping every client in it — never
-        deletes the clients themselves. Returns the number un-grouped."""
+        """"Deletes" a group — un-groups every client in it (never deletes
+        the clients themselves) and drops it from the roster so it stops
+        appearing as a selectable option. Returns the number un-grouped."""
         return self.rename_group(group, "")
 
     def update_assessee_email(self, pan: str, email: str, cc: str = "") -> bool:

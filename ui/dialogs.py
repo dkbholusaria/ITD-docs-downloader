@@ -205,7 +205,7 @@ class ManageGroupsDialog(QDialog):
         super().__init__(parent)
         self._vault = vault
         self.setWindowTitle("Manage Groups")
-        self.setFixedSize(460, 480)
+        self.setFixedSize(460, 520)
         self.setModal(True)
         self._build_ui()
         self._refresh_list()
@@ -237,12 +237,39 @@ class ManageGroupsDialog(QDialog):
         scroll.setWidget(inner)
         main.addWidget(scroll, 1)
 
+        # ── Add Group ─────────────────────────────────────────────────────
+        # Lets a group be created ahead of assigning any client to it —
+        # otherwise the only way to create one was from inside a client's
+        # own Group field, and this list would stay empty until the first
+        # client was actually assigned.
+        add_row = QHBoxLayout()
+        add_row.setSpacing(8)
+        self._new_group_edit = QLineEdit()
+        self._new_group_edit.setPlaceholderText("New group name, e.g. Bholusaria Family")
+        self._new_group_edit.setFixedHeight(32)
+        self._new_group_edit.returnPressed.connect(self._add_group)
+        add_row.addWidget(self._new_group_edit, 1)
+        add_group_btn = _btn("Add Group", "outline", height=32)
+        add_group_btn.clicked.connect(self._add_group)
+        add_row.addWidget(add_group_btn)
+        main.addLayout(add_row)
+
         btns_row = QHBoxLayout()
         btns_row.addStretch()
         close_btn = _btn("Close", "primary", height=36)
         close_btn.clicked.connect(self.accept)
         btns_row.addWidget(close_btn)
         main.addLayout(btns_row)
+
+    def _add_group(self):
+        name = self._new_group_edit.text().strip()
+        if not name:
+            return
+        if not self._vault.add_group(name):
+            QMessageBox.warning(self, "Group Exists", f'"{name}" already exists.')
+            return
+        self._new_group_edit.clear()
+        self._refresh_list()
 
     def _clear_rows(self):
         while self._list_layout.count() > 1:
