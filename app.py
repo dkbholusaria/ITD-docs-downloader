@@ -3060,9 +3060,13 @@ class AayDocCapioApp(QMainWindow):
                     if result["ok"]:
                         self.vault.record_return_status(
                             pan, ay_value, result["status"],
+                            status_date=result.get("status_date", ""),
                             filing_date=result.get("filing_date", ""),
                             ack_no=result.get("ack_no", ""))
-                        set_status(i, f"✅ {result['status']}")
+                        status_display = result["status"]
+                        if result.get("status_date"):
+                            status_display += f" ({result['status_date']})"
+                        set_status(i, f"✅ {status_display}")
                     else:
                         set_status(i, f"❌ {result['reason']}")
                 except Exception as e:

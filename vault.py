@@ -338,17 +338,18 @@ class VaultManager:
     # any download having happened.
 
     def record_return_status(self, pan: str, ay_label: str, status: str,
-                              filing_date: str = "", ack_no: str = ""):
+                              status_date: str = "", filing_date: str = "", ack_no: str = ""):
         """Record the latest known ITR processing status for a client/AY.
-        `ts` is when THIS app last checked, not the portal's own filing or
-        processing date (those are `filing_date`/whatever `status` itself
-        says)."""
+        `ts` is when THIS app last checked, distinct from both `status_date`
+        (the date the PORTAL itself shows against that status step, e.g.
+        "Aug 3, 2026") and `filing_date` (when the return was filed)."""
         raw_data = self._get_raw()
         pan = pan.strip().upper()
         hist = raw_data.setdefault("return_status_history", {})
         ay_map = hist.setdefault(pan, {})
         ay_map[ay_label] = {
             "status": status,
+            "status_date": status_date,
             "filing_date": filing_date,
             "ack_no": ack_no,
             "ts": datetime.datetime.now().strftime("%d-%b-%Y %H:%M:%S"),
@@ -356,8 +357,9 @@ class VaultManager:
         self._save_raw(raw_data)
 
     def get_return_status(self, ay_label: str) -> dict:
-        """{pan: {"status", "filing_date", "ack_no", "ts"}} for one AY —
-        only clients that have actually been checked at least once."""
+        """{pan: {"status", "status_date", "filing_date", "ack_no", "ts"}}
+        for one AY — only clients that have actually been checked at least
+        once."""
         raw_data = self._get_raw()
         hist = raw_data.get("return_status_history", {})
         return {
@@ -367,9 +369,9 @@ class VaultManager:
         }
 
     def get_return_status_all(self) -> dict:
-        """{pan: {ay_label: {"status", "filing_date", "ack_no", "ts"}}} —
-        every client/AY ever checked, for the status window's "All Years"
-        view."""
+        """{pan: {ay_label: {"status", "status_date", "filing_date",
+        "ack_no", "ts"}}} — every client/AY ever checked, for the status
+        window's "All Years" view."""
         raw_data = self._get_raw()
         return raw_data.get("return_status_history", {})
 

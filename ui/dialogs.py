@@ -5009,7 +5009,7 @@ class ReturnStatusDialog(QDialog):
         self._table.setColumnWidth(self._COL_CHECK, 32)
         self._table.setColumnWidth(self._COL_PAN, 110)
         self._table.setColumnWidth(self._COL_AY, 80)
-        self._table.setColumnWidth(self._COL_STATUS, 260)
+        self._table.setColumnWidth(self._COL_STATUS, 320)
         self._table.setColumnWidth(self._COL_LAST_CHECKED, 140)
         self._table.verticalHeader().setVisible(False)
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -5085,6 +5085,7 @@ class ReturnStatusDialog(QDialog):
                 rows.append({
                     "pan": pan, "name": c.get("name", ""), "ay": ay_value,
                     "status": entry.get("status", "") if entry else "",
+                    "status_date": entry.get("status_date", "") if entry else "",
                     "ts": entry.get("ts", "") if entry else "",
                 })
         else:
@@ -5097,7 +5098,9 @@ class ReturnStatusDialog(QDialog):
                 for ay_label, entry in ay_map.items():
                     rows.append({
                         "pan": pan, "name": name, "ay": ay_label,
-                        "status": entry.get("status", ""), "ts": entry.get("ts", ""),
+                        "status": entry.get("status", ""),
+                        "status_date": entry.get("status_date", ""),
+                        "ts": entry.get("ts", ""),
                     })
             rows.sort(key=lambda r: (r["name"].lower(), r["ay"]))
 
@@ -5139,7 +5142,10 @@ class ReturnStatusDialog(QDialog):
             ay_item.setForeground(QColor(_bt.text_primary))
             self._table.setItem(i, self._COL_AY, ay_item)
 
-            status_text = r["status"] or "⚠ Not yet checked"
+            if r["status"]:
+                status_text = f"{r['status']} ({r['status_date']})" if r["status_date"] else r["status"]
+            else:
+                status_text = "⚠ Not yet checked"
             status_item = QTableWidgetItem(status_text)
             status_item.setForeground(QColor(_bt.text_primary if r["status"] else
                                               getattr(_bt, "warning", "#D97706")))

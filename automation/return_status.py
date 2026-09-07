@@ -31,10 +31,11 @@ from automation.downloader_filed_returns import (
     _is_discarded,
     _pager_arrow_enabled,
     _goto_page,
+    _INTIMATION_DATE_RE,
 )
 
 
-async def _read_latest_status_text(card, step) -> str:
+async def _read_latest_status(card, step) -> tuple[str, str]:
     """Confirmed markup (shared with _is_discarded/_is_return_verified in
     downloader_filed_returns.py): one .matStepStatus element per step on the
     filing's status timeline. BUG FIX (2026-09-07): confirmed live (a real
@@ -47,33 +48,61 @@ async def _read_latest_status_text(card, step) -> str:
     the very first, most outdated step — as the client's current status,
     even though the return was actually already fully processed. Now reads
     the FIRST step instead, which is the most advanced one actually
-    reached."""
+    reached.
+
+    Returns (status_text, status_date) — status_date is the date the
+    PORTAL itself shows against that step (e.g. "Aug 3, 2026"), read from
+    the step's own container text via the same date regex already used for
+    Intimation Order dates, since the date isn't inside .matStepStatus
+    itself (confirmed live: that element's own text is just the status
+    label, e.g. "ITR Filed" with no date). UNCONFIRMED, flagged for live
+    testing: the container is assumed to be .matStepStatus's immediate
+    parent — if a live check shows the date living somewhere else in the
+    step's markup, this is the one thing to fix here."""
     try:
         statuses = card.locator(".matStepStatus")
         count = await statuses.count()
         if count == 0:
             step("No .matStepStatus steps found on this card")
-            return ""
-        text = (await statuses.nth(0).inner_text() or "").strip()
+            return "", ""
+        latest = statuses.nth(0)
+        text = (await latest.inner_text() or "").strip()
         step(f"Latest status step ({count} total): '{text}'")
-        return text
+
+        status_date = ""
+        try:
+            container_text = await latest.locator("xpath=..").inner_text()
+            m = _INTIMATION_DATE_RE.search(container_text)
+            if m:
+                status_date = m.group(1)
+                step(f"Latest status date: '{status_date}'")
+            else:
+                step(f"No date found in status step container text: '{container_text}'")
+        except Exception as e:
+            step(f"Could not read status step date: {e}")
+
+        return text, status_date
     except Exception as e:
         step(f"Could not read status stepper: {e}")
-        return ""
+        return "", ""
 
 
 async def check_return_status(page: Page, assessment_year: str, log_callback,
                                pan: str = "", dob: str = "") -> dict:
     """One already-logged-in client, one Assessment Year. Returns:
-    {"ok": bool, "reason": str, "status": str, "filing_date": str, "ack_no": str}
+    {"ok": bool, "reason": str, "status": str, "status_date": str,
+     "filing_date": str, "ack_no": str}
     ok=False covers: AY filter didn't apply, no (non-discarded) filing found
     for this AY, or a navigation/timeout failure — reason has a short
     human-readable explanation in every ok=False case. status is the raw
     text of the latest filing's current stepper step (e.g. "ITR processed",
     "Successfully e-Verified", "Pending for e-Verification") — shown exactly
-    as the portal itself shows it, never simplified or remapped."""
+    as the portal itself shows it, never simplified or remapped. status_date
+    is the date the PORTAL shows against that same step (e.g. "Aug 3,
+    2026") — distinct from filing_date (when the return was filed) and from
+    whatever timestamp the caller records for "when this app last checked."""
     step = make_step_logger(log_callback, "RETSTATUS")
-    empty = {"ok": False, "reason": "", "status": "", "filing_date": "", "ack_no": ""}
+    empty = {"ok": False, "reason": "", "status": "", "status_date": "", "filing_date": "", "ack_no": ""}
     try:
         step(f"Starting return status check — AY={assessment_year}, pan={'set' if pan else 'blank'}")
         filed_returns_page = await navigate_to_view_filed_returns(page, log_callback)
@@ -137,13 +166,13 @@ async def check_return_status(page: Page, assessment_year: str, log_callback,
         await _goto_page(winner["page"], current_page, next_page_btn, prev_page_btn, step)
         card = filed_returns_page.locator("mat-card.contextBox").nth(winner["index"])
         ack_no = await _read_ack_no(card, step)
-        status_text = await _read_latest_status_text(card, step)
+        status_text, status_date = await _read_latest_status(card, step)
 
         if not status_text:
             return {**empty, "reason": "Found the filing but could not read its status"}
 
         return {
-            "ok": True, "reason": "", "status": status_text,
+            "ok": True, "reason": "", "status": status_text, "status_date": status_date,
             "filing_date": winner["date_text"], "ack_no": ack_no,
         }
     except Exception as e:
